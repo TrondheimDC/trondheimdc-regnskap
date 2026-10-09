@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowRightLeft,
+  ChevronRight,
   CircleCheck,
   CircleX,
   FilePen,
@@ -866,28 +867,54 @@ function ChecksCard({
         title={failed === 0 ? "Alt stemmer" : `${failed} av ${checks.length} avviker`}
         subtitle={subtitle}
       >
-        <ul className="mt-4 flex flex-col gap-3">
-          {checks.map((c) => (
-            <CheckRow key={c.label} check={c} />
-          ))}
-        </ul>
-
-        {marks.length > 0 ? (
-          <div className="mt-4 border-t border-white/10 pt-3">
-            <p className="mb-1 text-xs tracking-[0.15em] text-[var(--color-fg-base)]/50 uppercase">
-              Kontrolltall i bilaget
-            </p>
-            <ul className="flex flex-col text-sm">
-              {marks.map((m) => (
-                <MarkRow key={m.n} marks={[m]} className="py-1">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[var(--color-fg-base)]/70">Checkin {m.label}</span>
-                    <MarkedAmount marks={[m]}>{formatNok(m.amount)}</MarkedAmount>
-                  </div>
-                </MarkRow>
+        {failed > 0 ? (
+          <ul className="mt-4 flex flex-col gap-3">
+            {checks
+              .filter((c) => !c.ok)
+              .map((c) => (
+                <CheckRow key={c.label} check={c} />
               ))}
+          </ul>
+        ) : null}
+
+        {/* Passing checks are detail: folded away so the deviations (or "Alt stemmer") stand out. */}
+        {failed < checks.length ? (
+          <details className="group mt-4 border-t border-white/10 pt-3">
+            <summary className="flex cursor-pointer list-none items-center gap-2 text-sm text-[var(--color-fg-base)]/70 hover:text-[var(--color-fg-base)] [&::-webkit-details-marker]:hidden">
+              <ChevronRight
+                className="size-4 shrink-0 transition-transform group-open:rotate-90"
+                aria-hidden
+              />
+              {failed === 0
+                ? `Vis de ${checks.length} kontrollene`
+                : `Vis de ${checks.length - failed} som stemmer`}
+            </summary>
+            <ul className="mt-3 flex flex-col gap-3">
+              {checks
+                .filter((c) => c.ok)
+                .map((c) => (
+                  <CheckRow key={c.label} check={c} />
+                ))}
             </ul>
-          </div>
+
+            {marks.length > 0 ? (
+              <div className="mt-4 border-t border-white/10 pt-3">
+                <p className="mb-1 text-xs tracking-[0.15em] text-[var(--color-fg-base)]/50 uppercase">
+                  Kontrolltall i bilaget
+                </p>
+                <ul className="flex flex-col text-sm">
+                  {marks.map((m) => (
+                    <MarkRow key={m.n} marks={[m]} className="py-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[var(--color-fg-base)]/70">Checkin {m.label}</span>
+                        <MarkedAmount marks={[m]}>{formatNok(m.amount)}</MarkedAmount>
+                      </div>
+                    </MarkRow>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </details>
         ) : null}
       </Card>
     </div>
