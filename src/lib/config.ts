@@ -80,7 +80,7 @@ export const Config = z
         payoutAccounts: z.array(CheckinAccount).default(["1920"]),
         /** Accounts whose closing balance together is what Checkin holds for us. Leave out to skip. */
         balanceAccounts: z.array(CheckinAccount).optional(),
-        /** Book the VAT amount Checkin charged (≤ 1 kr from 25 %) instead of letting Fiken round it. */
+        /** Book the gross Checkin charged (VAT ≤ 1 kr from 25 %) and derive the net from it, so the Checkin account matches to the øre. */
         useCheckinVat: z.boolean().default(true),
         /** Checkin's VAT accounts per VAT type, used to cross-check our VAT. */
         outputVat: z.partialRecord(VatType, CheckinAccount).default({ HIGH: "2701" }),

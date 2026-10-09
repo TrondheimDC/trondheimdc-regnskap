@@ -268,7 +268,7 @@ async function report() {
     printLines("Kjøp", plan.purchase.lines, plan.purchase.gross)
     printAccrual(config.purchase.accrual)
   }
-  for (const a of prepared.adjusted) console.log(`  Mva som Checkin: ${a}`)
+  for (const a of prepared.adjusted) console.log(`  Øreavrunding: ${a}`)
   console.log(`\nNetto til Checkin-kontoen: ${formatNok(plan.expectedPayout)}`)
 
   console.log("\nKontroll mot rapporten")

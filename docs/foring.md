@@ -60,7 +60,9 @@ Checkin sender regnskapsbilaget som PDF til Fiken-innboksen. Verktøyet henter P
 
    Verktøyet fører ikke på mva-kontoene selv. Fiken fører mva ut fra mva-typen på linjen, som i den manuelle oppskriften. 2701/2711 er Checkins kontoer i PDF-en.
 
-   Checkin runder mva per billett og gebyr, og kan derfor avvike noen øre fra 25 % av totalen. For at Checkin-kontoen i Fiken skal stemme på øret, sendes mva-beløpet Checkin faktisk har beregnet med på linjen, så lenge avviket er under 1 kr. Dette kan slås av med `"reconcile": { "useCheckinVat": false }`.
+   Checkin runder mva per billett og gebyr, og kan derfor avvike noen øre fra 25 % av totalen. Fiken godtar ikke et eget mva-beløp: netto må være brutto / 1,25. For at Checkin-kontoen i Fiken skal stemme på øret, sendes bruttobeløpet Checkin faktisk har belastet (netto + Checkins mva), og netto regnes ut fra det. Øreavrundingen havner da mellom netto og mva, så lenge avviket er under 1 kr. Dette kan slås av med `"reconcile": { "useCheckinVat": false }`.
+
+   Mva-kontrollen feiler hvis avrundingen havner i Skatteetatens disfavør: mindre utgående mva enn billettene viser, eller mer inngående mva enn Checkin fakturerte. Det er noen øre; vurder om du vil føre likevel.
 3. **Sjekker mot Fiken:**
    - at bankkontoene finnes,
    - at vedlegget finnes,
@@ -200,7 +202,6 @@ I Checkins regnskapsbilag er 1500 kundefordringer (fakturerte billetter som ikke
 - **Banklinjer:** Fiken-API-et har ingen banklinjer eller avstemming. Den fri posteringen må derfor kobles til banklinjen i Superføring for hånd, se [Utbetalinger](#utbetalinger-fri-posteringer).
 - **Dato:** Fiken anbefaler å datere overføringer fra betalingstjenester med datoen pengene kom inn på banken. Verktøyet bruker Checkins «Bokført»-dato. Hvis en utbetaling krysser et månedsskifte, kan månedens bankavstemming på 1920 avvike. Se [TODO.md](TODO.md).
 - **Ikke verifisert mot Fiken:** flere ting er bare testet mot en mock av API-et og må sjekkes i et testselskap, se [TODO.md](TODO.md):
-  - at egne mva-beløp på linjene blir stående,
   - at samme innboksdokument kan legges ved flere føringer,
   - hvilken id `Location`-headeren for fri posteringer gir.
 

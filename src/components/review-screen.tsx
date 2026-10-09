@@ -712,7 +712,7 @@ function SideCard({
       {notes.length > 0 ? (
         <ul className="mt-2 space-y-1 text-xs text-[var(--color-fg-base)]/50">
           {notes.map((a) => (
-            <li key={a}>Mva som Checkin: {a}</li>
+            <li key={a}>Øreavrunding: {a}</li>
           ))}
         </ul>
       ) : null}

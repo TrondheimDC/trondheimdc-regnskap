@@ -175,13 +175,13 @@ export function prepare(source: ReportSource, config: Config, month = source.mon
   }
   parseMonth(month)
 
-  // Fiken posts the VAT from the VAT type; we send Checkin's VAT amount (checked against 25 % first)
-  // so the Checkin account matches Checkin to the øre.
+  // Fiken derives the VAT from the gross; we send Checkin's gross so the Checkin account matches
+  // Checkin to the øre, and check the resulting VAT against Checkin's.
   const computed = buildPlan(toReport(month, source.movements, config), config)
-  const vatChecks = verifyPlan(computed, source.balance, config.reconcile)
   const { plan, adjusted } = config.reconcile.useCheckinVat
     ? applyCheckinVat(computed, source.balance, config.reconcile)
     : { plan: computed, adjusted: [] }
+  const vatChecks = verifyPlan(plan, source.balance, config.reconcile)
 
   return {
     month,

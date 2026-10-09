@@ -23,17 +23,23 @@ export interface Plan {
   expectedPayout: number
 }
 
-const VAT_RATES: Record<VatType, number> = {
-  HIGH: 0.25,
-  MEDIUM: 0.15,
-  LOW: 0.12,
+/** VAT rates in percent, so the sums stay in integers. */
+const VAT_PERCENT: Record<VatType, number> = {
+  HIGH: 25,
+  MEDIUM: 15,
+  LOW: 12,
   NONE: 0,
   EXEMPT: 0,
   OUTSIDE: 0,
 }
 
 export function vatFor(net: number, vatType: VatType): number {
-  return Math.round(net * VAT_RATES[vatType])
+  return Math.round((net * VAT_PERCENT[vatType]) / 100)
+}
+
+/** The net Fiken requires for a gross amount: gross / (1 + rate), rounded to the øre. */
+export function netFromGross(gross: number, vatType: VatType): number {
+  return Math.round((gross * 100) / (100 + VAT_PERCENT[vatType]))
 }
 
 /** "2026-03" -> "2026-03-31" */

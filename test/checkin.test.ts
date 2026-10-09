@@ -56,7 +56,7 @@ test("reads the summary page, not the cover or detail pages", async () => {
   ])
 })
 
-test("follows the recipe with the VAT amounts Checkin charged", async () => {
+test("follows the recipe with the gross Checkin charged", async () => {
   const { computed, plan, adjusted } = await marchPlan()
   expect(computed.purchase.lines[0]!.vat).toBe(30860) // 25 % of 1 234,40
   expect(adjusted).toHaveLength(1)
@@ -67,8 +67,9 @@ test("follows the recipe with the VAT amounts Checkin charged", async () => {
   expect(plan.purchase.lines).toEqual([
     {
       description: "Checkin gebyr",
-      netPrice: 123440,
-      vat: 30865,
+      // Checkin: 1 234,40 + 308,65 mva. Fiken requires net = gross / 1,25.
+      netPrice: 123444,
+      vat: 30861,
       vatType: "HIGH",
       account: "4300",
     },
@@ -85,14 +86,82 @@ test("follows the recipe with the VAT amounts Checkin charged", async () => {
 })
 
 test("all report checks pass on a consistent report", async () => {
-  const { report, computed, plan } = await marchPlan()
+  const { report, plan } = await marchPlan()
   const checks = [
-    ...verifyPlan(computed, report.balance, config.reconcile),
+    ...verifyPlan(plan, report.balance, config.reconcile),
     ...verifyPayoutList(report, config.reconcile.payoutAccounts),
     ...verifyNet(plan, report.balance, config.reconcile),
   ]
   expect(checks).toHaveLength(4)
   expect(checks.every((c) => c.ok)).toBe(true)
+})
+
+test("keeps Checkin's gross with a net Fiken accepts", () => {
+  // From a real report: Fiken rejected net 2 139,75 with gross 2 674,74 (expected 2 139,79).
+  const line = {
+    description: "Gebyr",
+    netPrice: 213975,
+    vat: 53494,
+    vatType: "HIGH",
+    account: "4300",
+  } as const
+  const plan = {
+    month: "2026-09",
+    date: "2026-09-30",
+    sale: { lines: [], gross: 0 },
+    purchase: { lines: [line], gross: 267469 },
+    expectedPayout: -267469,
+  }
+  const { plan: booked, adjusted } = applyCheckinVat(
+    plan,
+    new Map([["2711", 53499]]),
+    config.reconcile,
+  )
+  expect(booked.purchase.lines[0]).toMatchObject({ netPrice: 213979, vat: 53495 })
+  expect(booked.purchase.gross).toBe(267474)
+  expect(adjusted).toHaveLength(1)
+})
+
+test("flags VAT on the wrong side of Checkin's for Skatteetaten", () => {
+  const plan = (saleVat: number, purchaseVat: number) => ({
+    month: "2026-09",
+    date: "2026-09-30",
+    sale: {
+      lines: [
+        {
+          description: "TDC",
+          netPrice: 400000,
+          vat: saleVat,
+          vatType: "HIGH" as const,
+          account: "3000",
+        },
+      ],
+      gross: 0,
+    },
+    purchase: {
+      lines: [
+        {
+          description: "Gebyr",
+          netPrice: 4000,
+          vat: purchaseVat,
+          vatType: "HIGH" as const,
+          account: "4300",
+        },
+      ],
+      gross: 0,
+    },
+    expectedPayout: 0,
+  })
+  const balance = new Map([
+    ["2701", -100000],
+    ["2711", 1000],
+  ])
+  const ok = (p: ReturnType<typeof plan>) =>
+    verifyPlan(p, balance, config.reconcile).map((c) => c.ok)
+  // More output VAT and less input VAT than Checkin is fine.
+  expect(ok(plan(100003, 997))).toEqual([true, true])
+  // Less output VAT or more input VAT than Checkin is flagged.
+  expect(ok(plan(99997, 1003))).toEqual([false, false])
 })
 
 test("a wrong VAT type in the recipe fails the checks", async () => {

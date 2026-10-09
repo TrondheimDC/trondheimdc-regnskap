@@ -3,7 +3,7 @@
 
 import type { Movements, Payout } from "./checkin.ts"
 import type { VatType } from "./fiken.ts"
-import { formatNok, type Plan } from "./plan.ts"
+import { formatNok, netFromGross, type Plan } from "./plan.ts"
 
 /** Checkin rounds VAT per ticket, we round per line, so allow a little drift. */
 const TOLERANCE_ORE = 100
@@ -33,23 +33,51 @@ export interface VatAccounts {
   inputVat: Partial<Record<VatType, string>>
 }
 
+/**
+ * Our VAT per type against Checkin's VAT accounts. Within rounding (≤ 1 kr), and on the safe side
+ * for Skatteetaten: output VAT not below what the tickets state, input VAT not above what Checkin
+ * invoiced. Fiken derives VAT from the line amount, so we cannot always hit Checkin's figure.
+ */
 export function verifyPlan(plan: Plan, balance: Movements, vatAccounts: VatAccounts): Check[] {
   const checks: Check[] = []
-  const add = (label: string, expected: number, actual: number) =>
-    checks.push({ label, expected, actual, ok: Math.abs(expected - actual) <= TOLERANCE_ORE })
+  const add = (label: string, ours: number, checkin: number, side: "sale" | "purchase") => {
+    const close = Math.abs(ours - checkin) <= TOLERANCE_ORE
+    const safe = side === "sale" ? ours >= checkin : ours <= checkin
+    checks.push({
+      label,
+      expected: ours,
+      actual: checkin,
+      ok: close && safe,
+      hint: !close
+        ? "Mva avviker mer enn avrunding. Sjekk mva-typen i oppskriften og at PDF-en er lest riktig."
+        : side === "sale"
+          ? "Fiken beregner litt mindre utgående mva enn billettene viser. Avviket er avrunding; vurder om du vil føre det."
+          : "Fiken beregner litt mer inngående mva enn Checkin fakturerte. Avviket er avrunding; vurder om du vil føre det.",
+    })
+  }
 
   const saleVat = vatByType(plan.sale.lines)
   for (const [vatType, account] of Object.entries(vatAccounts.outputVat) as [VatType, string][]) {
     const reported = balance.get(account)
     if (reported === undefined) continue
-    add(`Utgående mva ${vatType} mot Checkin ${account}`, saleVat.get(vatType) ?? 0, -reported)
+    add(
+      `Utgående mva ${vatType} mot Checkin ${account}`,
+      saleVat.get(vatType) ?? 0,
+      -reported,
+      "sale",
+    )
   }
 
   const purchaseVat = vatByType(plan.purchase.lines)
   for (const [vatType, account] of Object.entries(vatAccounts.inputVat) as [VatType, string][]) {
     const reported = balance.get(account)
     if (reported === undefined) continue
-    add(`Inngående mva ${vatType} mot Checkin ${account}`, purchaseVat.get(vatType) ?? 0, reported)
+    add(
+      `Inngående mva ${vatType} mot Checkin ${account}`,
+      purchaseVat.get(vatType) ?? 0,
+      reported,
+      "purchase",
+    )
   }
   return checks
 }
@@ -157,10 +185,11 @@ export function verifyNet(
 }
 
 /**
- * Uses the VAT Checkin actually charged instead of 25 % of the net, so the Checkin account in
- * Fiken matches Checkin to the øre instead of drifting by rounding every month. Only applied when
- * one line has that VAT type and the difference is rounding (≤ 1 kr); bigger differences are left
- * for the checks to flag.
+ * Books the gross Checkin actually charged (net + Checkin's VAT) instead of net + 25 %, so the
+ * Checkin account in Fiken matches Checkin to the øre. Fiken only accepts net = gross / 1.25, so
+ * the net is recomputed from the gross and the rounding moves between net and VAT. Only applied
+ * when one line has that VAT type and the difference is rounding (≤ 1 kr); bigger differences
+ * are left for the checks to flag.
  */
 export function applyCheckinVat(
   plan: Plan,
@@ -174,12 +203,16 @@ export function applyCheckinVat(
       const reported = account === undefined ? undefined : balance.get(account)
       if (reported === undefined || lines.filter((l) => l.vatType === line.vatType).length !== 1)
         return line
-      const vat = sign * reported
-      if (vat === line.vat || Math.abs(vat - (line.vat ?? 0)) > TOLERANCE_ORE) return line
+      const checkinVat = sign * reported
+      const vat = line.vat ?? 0
+      if (checkinVat === vat || Math.abs(checkinVat - vat) > TOLERANCE_ORE) return line
+      const gross = line.netPrice + checkinVat
+      const netPrice = netFromGross(gross, line.vatType)
+      if (netPrice === line.netPrice) return line
       adjusted.push(
-        `"${line.description}": mva ${formatNok(line.vat ?? 0)} → ${formatNok(vat)} (fra Checkin ${account})`,
+        `"${line.description}": netto ${formatNok(line.netPrice)} → ${formatNok(netPrice)}, så brutto blir ${formatNok(gross)} som hos Checkin (mva ${formatNok(gross - netPrice)}, Checkin ${formatNok(checkinVat)})`,
       )
-      return { ...line, vat }
+      return { ...line, netPrice, vat: gross - netPrice }
     })
 
   const saleLines = adopt(plan.sale.lines, vatAccounts.outputVat, -1)
