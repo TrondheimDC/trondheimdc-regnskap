@@ -107,7 +107,7 @@ export function PdfPreview({
       <div className={cn("flex flex-col gap-3", !open && "hidden lg:flex")}>
         <div ref={scroller} className="overflow-x-auto rounded-lg">
           <div
-            className="relative min-w-[36rem] overflow-hidden rounded-lg bg-white lg:min-w-0"
+            className="relative min-w-[36rem] overflow-clip rounded-lg bg-white lg:min-w-0"
             style={{ aspectRatio: `${cw} / ${ch}` }}
           >
             <div

@@ -47,11 +47,12 @@ export function MarkProvider({
       setPinned(n)
       clearTimeout(unpin.current)
       unpin.current = setTimeout(() => setPinned(undefined), 2500)
-      // Wait a frame so a just-opened PDF section has its layout.
+      // Wait a frame so a just-opened PDF section has its layout. The crop box is overflow: clip,
+      // not hidden, so this can't scroll it sideways where the user can't scroll back.
       requestAnimationFrame(() =>
         document
           .getElementById(`mark-${n}`)
-          ?.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" }),
+          ?.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" }),
       )
     },
     [onReveal],
