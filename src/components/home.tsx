@@ -53,21 +53,12 @@ function LoginScreen() {
       <div className="relative z-10 flex w-full max-w-sm flex-col items-center gap-8">
         <div className="auth-mark flex flex-col items-center gap-3 text-center">
           <TdcLogo className="h-9" />
-          <div>
-            <p className="text-xs font-medium tracking-[0.2em] text-[var(--color-fg-base)]/50 uppercase">
-              TDC
-            </p>
-            <h1 className="text-lg font-semibold tracking-tight text-[var(--color-fg-base)]/90">
-              Regnskap
-            </h1>
-          </div>
+          <h1 className="text-lg font-semibold tracking-tight text-[var(--color-fg-base)]/90">
+            Regnskap
+          </h1>
         </div>
 
         <div className="auth-card flex w-full flex-col gap-5 rounded-2xl p-6">
-          <p className="text-[var(--color-fg-base)]/70">
-            Fører regnskapsbilaget fra Checkin i Fiken. Du ser over tallene og bekrefter før noe
-            blir ført.
-          </p>
           {login.error ? (
             <Alert variant="destructive">
               <AlertDescription>{login.error.message}</AlertDescription>
