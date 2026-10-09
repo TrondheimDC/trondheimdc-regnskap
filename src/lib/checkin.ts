@@ -212,7 +212,7 @@ export function parseReport(rows: Cell[][], page = 0): ParsedReport {
     const existing = target.get(account)
     if (existing !== undefined && existing !== value) {
       throw new Error(
-        `Account ${account} appears more than once with different amounts (${existing / 100} and ${value / 100})`,
+        `Konto ${account} står flere ganger i bilaget med ulike beløp (${existing / 100} og ${value / 100})`,
       )
     }
     target.set(account, value)
@@ -291,7 +291,7 @@ export async function parseReportPdf(data: Uint8Array): Promise<ParsedReport> {
   const report = summary && parseReport(summary, summaryIndex)
   if (!report || report.movements.size === 0) {
     throw new Error(
-      "Found no result accounts (3000–8999) on the summary page. Is this a Checkin regnskapsbilag?",
+      "Fant ingen resultatkontoer (3000–8999) på sammendragssiden. Er dette et regnskapsbilag fra Checkin?",
     )
   }
   return { ...report, month }
@@ -329,9 +329,9 @@ export function toReport(month: string, movements: Movements, config: Config): C
   const unclaimed = [...movements].filter(([account, net]) => net !== 0 && !claimed.has(account))
   if (unclaimed.length > 0) {
     throw new Error(
-      `The report has amounts on Checkin accounts the config doesn't cover: ` +
+      `Bilaget har beløp på Checkin-kontoer som oppskriften ikke dekker: ` +
         `${unclaimed.map(([a, net]) => `${a} (${net / 100})`).join(", ")}. ` +
-        `Add them to a line's "from" or to "ignore" in the config.`,
+        `Legg dem til i "from" på en linje eller i "ignore" i regnskap.config.json.`,
     )
   }
   return { month, revenue: lines(config.sale), fees: lines(config.purchase) }

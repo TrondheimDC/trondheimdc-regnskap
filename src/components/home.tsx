@@ -65,8 +65,8 @@ function LoginScreen() {
 
         <div className="auth-card flex w-full flex-col gap-5 rounded-2xl p-6">
           <p className="text-[var(--color-fg-base)]/70">
-            Fører månedens regnskapsbilag fra Checkin i Fiken. Ingenting føres før du har sett over
-            tallene og bekreftet.
+            Fører regnskapsbilaget fra Checkin i Fiken. Du ser over tallene og bekrefter før noe
+            blir ført.
           </p>
           {login.error ? (
             <Alert variant="destructive">
@@ -189,7 +189,7 @@ function PickerLoading() {
       className="flex min-h-[9.5rem] items-center justify-center gap-3 rounded-xl bg-[var(--color-bg-surface)]/50 text-sm text-[var(--color-fg-base)]/60 sm:col-span-2 lg:col-span-3"
     >
       <Spinner />
-      Henter regnskapsbilag fra Fiken…
+      Henter bilag fra innboksen…
     </div>
   )
 }
@@ -228,12 +228,12 @@ function Picker({ client, onPick }: { client?: Fiken; onPick: (s: Selection) => 
             ) : null
           }
         >
-          Regnskapsbilag i Fiken-innboksen
+          Regnskapsbilag fra Checkin
         </SectionLabel>
 
         {inbox.isError ? (
           <Alert variant="destructive">
-            <AlertTitle>Fikk ikke lest innboksen</AlertTitle>
+            <AlertTitle>Klarte ikke å hente innboksen</AlertTitle>
             <AlertDescription>{inbox.error.message}</AlertDescription>
           </Alert>
         ) : null}
@@ -243,10 +243,9 @@ function Picker({ client, onPick }: { client?: Fiken; onPick: (s: Selection) => 
             <span className="flex size-14 items-center justify-center rounded-full bg-[var(--color-fg-brand)]/15 text-[var(--color-fg-brand)]">
               <Inbox className="size-7" aria-hidden />
             </span>
-            <h2 className="text-2xl">Ingen regnskapsbilag</h2>
+            <h2 className="text-2xl">Ingen bilag ennå</h2>
             <p className="max-w-xs text-sm text-[var(--color-fg-base)]/70">
-              Checkin sender regnskapsbilaget for forrige måned til innboksen i starten av hver
-              måned.
+              Checkin sender bilaget for forrige måned til innboksen i Fiken tidlig i måneden.
             </p>
             <Button
               variant="outline"
@@ -255,15 +254,15 @@ function Picker({ client, onPick }: { client?: Fiken; onPick: (s: Selection) => 
               disabled={inbox.isFetching}
             >
               <RefreshCw className="size-4" aria-hidden />
-              Sjekk igjen
+              Se etter nye
             </Button>
           </div>
         ) : null}
 
         {inbox.data && docs.length > 0 && unused === 0 ? (
           <p className="text-sm text-[var(--color-fg-base)]/60">
-            Ingen nye bilag – alle er brukt i Fiken. Neste kommer i starten av måneden. Åpne et
-            brukt bilag for å kontrollere føringen.
+            Alt er ført. Neste bilag kommer tidlig i neste måned. Åpne et ført bilag for å
+            kontrollere det.
           </p>
         ) : null}
 
@@ -285,7 +284,7 @@ function Picker({ client, onPick }: { client?: Fiken; onPick: (s: Selection) => 
       </div>
 
       <div className="flex flex-col gap-3">
-        <SectionLabel>Kontroller en PDF</SectionLabel>
+        <SectionLabel>Fra fil</SectionLabel>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Button
             asChild
@@ -297,9 +296,9 @@ function Picker({ client, onPick }: { client?: Fiken; onPick: (s: Selection) => 
                 <Upload className="size-5" aria-hidden />
               </span>
               <span className="min-w-0 flex-1 font-normal">
-                <span className="block font-semibold">Velg fil</span>
+                <span className="block font-semibold">Velg PDF</span>
                 <span className="mt-1 block text-sm opacity-70">
-                  Viser tallene og kontrollene. For å føre må bilaget ligge i Fiken-innboksen.
+                  Se tallene og kontrollene for et bilag. For å føre det må det ligge i innboksen.
                 </span>
               </span>
               <input
@@ -354,10 +353,10 @@ function ReportCard({ doc, onPick }: { doc: ReportDocument; onPick: () => void }
         {doc.used ? (
           <Badge variant="outline" className="text-[var(--color-fg-base)]/70">
             <Check aria-hidden />
-            Brukt
+            Ført
           </Badge>
         ) : (
-          <Badge>Ny</Badge>
+          <Badge>Ikke ført</Badge>
         )}
       </span>
       <span className="flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-sm font-normal">

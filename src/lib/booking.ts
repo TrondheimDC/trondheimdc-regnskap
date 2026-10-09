@@ -115,7 +115,7 @@ async function resolveContact(
       (c) => c[role] && !c.inactive,
     )
     if (matches.length > 1) {
-      return `${label} med org.nr. ${ref.organizationNumber} finnes ${matches.length} ganger i Fiken; bruk contactId (${matches.map((c) => `${c.contactId} ${c.name}`).join(", ")})`
+      return `${label} med org.nr. ${ref.organizationNumber} finnes ${matches.length} ganger i Fiken. Velg én med contactId i oppskriften (${matches.map((c) => `${c.contactId} ${c.name}`).join(", ")})`
     }
     contact = matches[0]
   }
@@ -169,9 +169,9 @@ export function mappingRows(movements: Movements, config: Config): MappingRow[] 
 
 /** Offline part: recipe lines and checks against the report. Throws if the month is unknown or amounts are unmapped. */
 export function prepare(source: ReportSource, config: Config, month = source.month): Prepared {
-  if (!month) throw new Error("Fant ikke måneden i rapporten; oppgi måned (YYYY-MM)")
+  if (!month) throw new Error("Fant ikke måneden i bilaget. Oppgi måned (ÅÅÅÅ-MM)")
   if (source.month && month !== source.month) {
-    throw new Error(`Valgt måned ${month} stemmer ikke med rapporten (${source.month})`)
+    throw new Error(`Valgt måned ${month} stemmer ikke med bilaget (${source.month})`)
   }
   parseMonth(month)
 
@@ -263,7 +263,7 @@ export async function inspectFiken(
   )
   for (const code of [config.checkinAccount, config.bankAccount]) {
     if (!codes.has(code))
-      blockers.push(`Bankkonto ${code} finnes ikke i Fiken (har: ${[...codes].join(", ")})`)
+      blockers.push(`Bankkontoen ${code} finnes ikke i Fiken (finnes: ${[...codes].join(", ")})`)
   }
 
   let doc: InboxDocument | undefined
@@ -273,31 +273,33 @@ export async function inspectFiken(
       (await findReportDocument(client, config.inbox.reportName, month)).match
     if (!doc)
       blockers.push(
-        `Fant ikke ett entydig "${config.inbox.reportName}"-dokument i innboksen å legge ved`,
+        `Fant ikke nøyaktig ett «${config.inbox.reportName}» for måneden i innboksen, så bilaget kan ikke legges ved`,
       )
   }
 
   if (options.mode === "draft") {
     if ((await client.saleDrafts()).some((d) => d.invoiceNumber === reference)) {
-      blockers.push(`Det finnes allerede et salgsutkast "${reference}"`)
+      blockers.push(
+        `Det ligger allerede et salgsutkast «${reference}» i Fiken. Slett eller bokfør det først.`,
+      )
     }
     if (
       plan.purchase.lines.length > 0 &&
       (await client.purchaseDrafts()).some((d) => d.invoiceNumber === reference)
     ) {
-      blockers.push(`Det finnes allerede et kjøpsutkast "${reference}"`)
+      blockers.push(
+        `Det ligger allerede et kjøpsutkast «${reference}» i Fiken. Slett eller bokfør det først.`,
+      )
     }
   }
   const existingSale = (await client.findSales(reference)).find((s) => !s.deleted)
   if (existingSale)
-    blockers.push(`Salget "${reference}" er allerede ført (saleId ${existingSale.saleId})`)
+    blockers.push(`Salget «${reference}» er allerede bokført (id ${existingSale.saleId})`)
   const existingPurchase = (await client.purchasesOn(plan.date)).find(
     (p) => !p.deleted && p.identifier === reference,
   )
   if (existingPurchase)
-    blockers.push(
-      `Kjøpet "${reference}" er allerede ført (purchaseId ${existingPurchase.purchaseId})`,
-    )
+    blockers.push(`Kjøpet «${reference}» er allerede bokført (id ${existingPurchase.purchaseId})`)
 
   let customer: ContactInfo | undefined
   let supplier: ContactInfo | undefined
@@ -574,10 +576,10 @@ export async function book(
         fiken.customer?.contactId,
       ),
     )
-    step(`Salgsutkast opprettet (draftId ${saleDraftId})`)
+    step(`Salgsutkast laget (id ${saleDraftId})`)
     if (doc) {
       await client.attachInboxDocument({ kind: "saleDraft", id: saleDraftId }, doc.documentId)
-      step("Vedlegg lagt til salgsutkast")
+      step("Bilaget lagt ved salgsutkastet")
     }
     if (plan.purchase.lines.length > 0) {
       const purchaseDraftId = await client.createPurchaseDraft(
@@ -590,13 +592,13 @@ export async function book(
           fiken.supplier?.contactId,
         ),
       )
-      step(`Kjøpsutkast opprettet (draftId ${purchaseDraftId})`)
+      step(`Kjøpsutkast laget (id ${purchaseDraftId})`)
       if (doc) {
         await client.attachInboxDocument(
           { kind: "purchaseDraft", id: purchaseDraftId },
           doc.documentId,
         )
-        step("Vedlegg lagt til kjøpsutkast")
+        step("Bilaget lagt ved kjøpsutkastet")
       }
     }
     // Fiken has no drafts for fri posteringer; open entries can be deleted without a counter-entry.
@@ -615,10 +617,10 @@ export async function book(
     paymentDate: plan.date,
     customerId: fiken.customer?.contactId,
   })
-  step(`Salg opprettet (saleId ${saleId})`)
+  step(`Salg bokført (id ${saleId})`)
   if (doc) {
     await client.attachInboxDocument({ kind: "sale", id: saleId }, doc.documentId)
-    step("Vedlegg lagt til salg")
+    step("Bilaget lagt ved salget")
   }
   const saleAccrual = config.sale.accrual
   if (saleAccrual) {
@@ -642,10 +644,10 @@ export async function book(
       paymentDate: plan.date,
       supplierId: fiken.supplier?.contactId,
     })
-    step(`Kjøp opprettet (purchaseId ${purchaseId})`)
+    step(`Kjøp bokført (id ${purchaseId})`)
     if (doc) {
       await client.attachInboxDocument({ kind: "purchase", id: purchaseId }, doc.documentId)
-      step("Vedlegg lagt til kjøp")
+      step("Bilaget lagt ved kjøpet")
     }
     const purchaseAccrual = config.purchase.accrual
     if (purchaseAccrual) {
@@ -698,11 +700,11 @@ async function bookTransfers(
     })
     moved += t.amount
     step(
-      `Fri postering${open ? " (åpen)" : ""} ${t.date}: ${formatNok(t.amount)} til ${config.bankAccount} (id ${entryId})`,
+      `Utbetaling ${t.date} ført som ${open ? "åpen " : ""}fri postering: ${formatNok(t.amount)} til ${config.bankAccount} (id ${entryId})`,
     )
     if (fiken.doc) {
       await client.attachInboxDocument({ kind: "journalEntry", id: entryId }, fiken.doc.documentId)
-      step(`Vedlegg lagt til fri postering ${t.voucher}`)
+      step(`Bilaget lagt ved utbetaling ${t.voucher}`)
     }
   }
   return moved
@@ -725,7 +727,7 @@ export async function resolveCompany(
   if (companies.length === 1) return companies[0]!
   throw new Error(
     companies.length === 0
-      ? "Fiken-brukeren har ingen selskaper"
+      ? "Fiken-brukeren har ikke tilgang til noen selskaper"
       : `Velg selskap med "companySlug" i regnskap.config.json: ${companies.map((c) => c.slug).join(", ")}`,
   )
 }

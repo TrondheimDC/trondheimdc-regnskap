@@ -398,8 +398,8 @@ describe("inspectFiken", () => {
       attach: true,
     })
     expect(state.blockers).toEqual([
-      expect.stringMatching(/Bankkonto 1920:10009 finnes ikke/),
-      expect.stringMatching(/allerede ført \(saleId 42\)/),
+      expect.stringMatching(/Bankkontoen 1920:10009 finnes ikke/),
+      expect.stringMatching(/allerede bokført \(id 42\)/),
     ])
     await expect(book(fake.client, cfg, await prepared(), state, "create")).rejects.toThrow(
       /Kan ikke føre/,
@@ -466,7 +466,7 @@ describe("book", () => {
     for (const [i, w] of fake.writes.entries())
       if (w.kind.startsWith("attach:")) expect(w.id).toBe(fake.writes[i - 1]!.id)
     expect(result.balance).toBeUndefined()
-    expect(result.steps.filter((s) => s.startsWith("Fri postering (åpen)"))).toHaveLength(2)
+    expect(result.steps.filter((s) => s.includes("åpen fri postering"))).toHaveLength(2)
   })
 
   test("create mode: sale, purchase and a fri postering per payout, balance as expected", async () => {
@@ -587,7 +587,7 @@ describe("auditBooked", () => {
       expect.arrayContaining([
         expect.stringMatching(/^Salg 3000, 25 % mva: netto/),
         expect.stringMatching(/^Kjøp 4300, 25 % mva: netto/),
-        expect.stringMatching(/^Utbetaling 2026-03-22 \(bilag 17342:14\)/),
+        expect.stringMatching(/^Utbetaling 2026-03-22 \(Checkin-bilag 17342:14\)/),
       ]),
     )
     const sale = audit.checks.find((c) => c.label.startsWith("Salg 3000, 25 % mva: netto"))!

@@ -101,7 +101,7 @@ Salget og kjøpet får referansen `Checkin YYYY-MM`. Verktøyet nekter å føre 
 
 ## Kontrollere en ført måned
 
-Et bilag som allerede er brukt i Fiken kan åpnes igjen. Det samme gjelder et bilag for en måned der salg eller kjøp allerede er ført. Da vises en kontroll i stedet for knappene for å føre, og ingenting skrives til Fiken.
+Et bilag som allerede er ført kan åpnes igjen, også når salget eller kjøpet er ført for hånd. Da vises en kontroll i stedet for knappene for å føre, og ingenting skrives til Fiken.
 
 Kontrollen finner månedens salg og kjøp i Fiken. Det er dem med referansen `Checkin YYYY-MM`, og alt som er datert i måneden og betalt til eller fra Checkin-kontoen, så også måneder som er ført for hånd kommer med. Deretter sjekkes:
 
@@ -110,7 +110,7 @@ Kontrollen finner månedens salg og kjøp i Fiken. Det er dem med referansen `Ch
 - **Checkin-kontoen:** det som er flyttet ut i måneden, utenom salget og kjøpet, mot det Checkin har utbetalt, og saldoen ved månedsslutt mot det Checkin holder for oss. Et saldoavvik kan stamme fra en tidligere måned.
 
 ```sh
-pnpm foring check --month 2026-03     # bilaget hentes fra innboksen, også brukte
+pnpm foring check --month 2026-03     # bilaget hentes fra innboksen, også førte
 pnpm foring check bilag-mars.pdf      # eller fra en lokal PDF
 ```
 

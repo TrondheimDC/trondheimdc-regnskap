@@ -137,13 +137,13 @@ function printAccrual(accrual: Config["sale"]["accrual"]) {
 }
 
 function printMapping(rows: MappingRow[]) {
-  console.log("\nLest fra Checkin (netto endring per Checkin-konto, kun for å finne beløpene)")
+  console.log("\nSlik er bilaget lest (netto endring per Checkin-konto og hvor det føres)")
   for (const { checkinAccount, net, target } of rows) {
     const text =
       target === "ignored"
         ? "(ignoreres)"
         : target === "unmapped"
-          ? "(ikke dekket av oppskriften)"
+          ? "(mangler i oppskriften)"
           : `→ ${target.side === "sale" ? "salg" : "kjøp"}, ${target.account} "${target.description}"`
     console.log(`  ${checkinAccount}  ${formatNok(net).padStart(16)}  ${text}`)
   }
@@ -260,7 +260,7 @@ async function report() {
   printMapping(prepared.mapping)
 
   console.log(
-    `\nFakturadato ${plan.date}, betalt til/fra ${config.checkinAccount}, referanse "${reference}"`,
+    `\nBilagsdato ${plan.date}, betalt til/fra ${config.checkinAccount}, referanse "${reference}"`,
   )
   printLines("Salg (Annet salg)", plan.sale.lines, plan.sale.gross)
   printAccrual(config.sale.accrual)
@@ -269,10 +269,10 @@ async function report() {
     printAccrual(config.purchase.accrual)
   }
   for (const a of prepared.adjusted) console.log(`  Øreavrunding: ${a}`)
-  console.log(`\nNetto til Checkin-kontoen: ${formatNok(plan.expectedPayout)}`)
+  console.log(`\nSalg − kjøp: ${formatNok(plan.expectedPayout)}`)
 
-  console.log("\nKontroll mot rapporten")
-  if (prepared.checks.length === 0) console.log("  (ingen kontoer i kilden å kontrollere mot)")
+  console.log("\nKontroller mot bilaget")
+  if (prepared.checks.length === 0) console.log("  (ingen kontoer i bilaget å kontrollere mot)")
   for (const p of source.payouts)
     console.log(`  · Utbetaling ${p.voucher} bokført ${p.date}: ${formatNok(p.amount)}`)
   let checksOk = printChecks(prepared.checks)
@@ -298,13 +298,13 @@ async function report() {
     )
   for (const b of state.blockers) warn(b)
   if (state.blockers.length === 0)
-    step(`Bankkontoer finnes, ingenting ført for ${formatMonthNo(month)} ennå`)
+    step(`Bankkontoene finnes, og ${formatMonthNo(month)} er ikke ført ennå`)
 
-  console.log(`\nFri posteringer (${config.checkinAccount} → ${config.bankAccount})`)
-  if (state.transfers.length === 0) console.log("  (ingen utbetalinger i rapporten)")
+  console.log(`\nUtbetalinger (${config.checkinAccount} → ${config.bankAccount})`)
+  if (state.transfers.length === 0) console.log("  (ingen utbetalinger i bilaget)")
   for (const t of state.transfers) {
     const line = `${t.date}  ${formatNok(t.amount).padStart(16)}  bilag ${t.voucher}`
-    if (t.existing) step(`${line}  finnes allerede (id ${t.existing.journalEntryId}), hoppes over`)
+    if (t.existing) step(`${line}  allerede ført (id ${t.existing.journalEntryId})`)
     else console.log(`  + ${line}  føres`)
   }
 
@@ -312,7 +312,7 @@ async function report() {
     `\nAvstemming av ${config.checkinAccount} (${formatNok(state.checkin.start)} → ${formatNok(state.checkin.end)} i Fiken før føring)`,
   )
   if (state.checks.length === 0)
-    console.log("  (fant ingen utbetalings- eller saldokontoer i rapporten å avstemme mot)")
+    console.log("  (fant ingen utbetalings- eller saldokontoer i bilaget å avstemme mot)")
   checksOk = printChecks(state.checks) && checksOk
 
   if (state.blockers.length > 0) fail("Kan ikke føre, se ✗ over.")
@@ -324,8 +324,8 @@ async function report() {
   // 4–5. Confirm, then write.
   const what =
     mode === "draft"
-      ? "Opprette utkast (og åpne fri posteringer) i Fiken"
-      : "Bokføre salg, kjøp og fri posteringer i Fiken"
+      ? "Lag utkast (og åpne fri posteringer) i Fiken"
+      : "Bokfør salg, kjøp og fri posteringer i Fiken"
   if (!(await confirm(what, checksOk))) {
     console.log("Avbrutt, ingenting er skrevet til Fiken.")
     return
@@ -335,7 +335,7 @@ async function report() {
   const result = await book(client, config, prepared, state, mode, step)
   if (mode === "draft" && (config.sale.accrual || config.purchase.accrual)) {
     console.log(
-      "\nUtkast kan ikke periodiseres via API-et. Periodiser linjene manuelt når utkastene bokføres i Fiken.",
+      "\nUtkast kan ikke periodiseres herfra. Periodiser linjene når du bokfører utkastene i Fiken.",
     )
   }
   if (result.balance) {
@@ -396,8 +396,8 @@ async function check() {
       )
   }
 
-  console.log(`\nFri posteringer (${config.checkinAccount} → ${config.bankAccount})`)
-  if (audit.transfers.length === 0) console.log("  (ingen utbetalinger i rapporten)")
+  console.log(`\nUtbetalinger (${config.checkinAccount} → ${config.bankAccount})`)
+  if (audit.transfers.length === 0) console.log("  (ingen utbetalinger i bilaget)")
   for (const t of audit.transfers) {
     const line = `${t.date}  ${formatNok(t.amount).padStart(16)}  bilag ${t.voucher}`
     if (t.existing) step(`${line}  ført (id ${t.existing.journalEntryId})`)

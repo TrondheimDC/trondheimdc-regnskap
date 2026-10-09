@@ -21,6 +21,15 @@ export interface Check {
   hint?: string
 }
 
+const VAT_LABELS: Record<string, string> = {
+  HIGH: "25 % mva",
+  MEDIUM: "15 % mva",
+  LOW: "12 % mva",
+  NONE: "uten mva",
+  EXEMPT: "fritatt for mva",
+  OUTSIDE: "utenfor mva",
+}
+
 function vatByType(lines: Plan["sale"]["lines"]): Map<VatType, number> {
   const sums = new Map<VatType, number>()
   for (const l of lines) sums.set(l.vatType, (sums.get(l.vatType) ?? 0) + (l.vat ?? 0))
@@ -49,10 +58,10 @@ export function verifyPlan(plan: Plan, balance: Movements, vatAccounts: VatAccou
       actual: checkin,
       ok: close && safe,
       hint: !close
-        ? "Mva avviker mer enn avrunding. Sjekk mva-typen i oppskriften og at PDF-en er lest riktig."
+        ? "Avviket er større enn øreavrunding. Sjekk mva-typen i oppskriften og at bilaget er lest riktig."
         : side === "sale"
-          ? "Fiken beregner litt mindre utgående mva enn billettene viser. Avviket er avrunding; vurder om du vil føre det."
-          : "Fiken beregner litt mer inngående mva enn Checkin fakturerte. Avviket er avrunding; vurder om du vil føre det.",
+          ? "Vi oppgir litt mindre utgående mva enn billettene viser. Det er øreavrunding, men i vår favør. Vurder om du vil føre likevel."
+          : "Vi trekker fra litt mer inngående mva enn Checkin fakturerte. Det er øreavrunding, men i vår favør. Vurder om du vil føre likevel.",
     })
   }
 
@@ -61,7 +70,7 @@ export function verifyPlan(plan: Plan, balance: Movements, vatAccounts: VatAccou
     const reported = balance.get(account)
     if (reported === undefined) continue
     add(
-      `Utgående mva ${vatType} mot Checkin ${account}`,
+      `Utgående ${VAT_LABELS[vatType]} mot Checkin ${account}`,
       saleVat.get(vatType) ?? 0,
       -reported,
       "sale",
@@ -73,7 +82,7 @@ export function verifyPlan(plan: Plan, balance: Movements, vatAccounts: VatAccou
     const reported = balance.get(account)
     if (reported === undefined) continue
     add(
-      `Inngående mva ${vatType} mot Checkin ${account}`,
+      `Inngående ${VAT_LABELS[vatType]} mot Checkin ${account}`,
       purchaseVat.get(vatType) ?? 0,
       reported,
       "purchase",
@@ -115,12 +124,12 @@ export function reconcile(
   if (paidOut !== undefined) {
     const movedOut = fiken.start - fiken.end + newTransfers
     checks.push({
-      label: `Utbetalt til bank: Checkin ${config.payoutAccounts.join("+")} mot overført fra ${fiken.code} i Fiken`,
+      label: `Utbetalt til bank: Checkin ${config.payoutAccounts.join("+")} mot flyttet fra ${fiken.code} i Fiken`,
       expected: movedOut,
       actual: paidOut,
       ok: movedOut === paidOut,
       source: "Fiken",
-      hint: "Noe annet er ført på Checkin-kontoen denne måneden, eller en utbetaling er ført med feil beløp eller dato.",
+      hint: "Noe annet er ført på Checkin-kontoen denne måneden, eller en utbetaling har feil beløp eller dato.",
     })
   }
 
@@ -179,7 +188,7 @@ export function verifyNet(
       actual: total,
       ok: Math.abs(plan.expectedPayout - total) <= TOLERANCE_ORE,
       source: "beregnet",
-      hint: "Noen beløp i rapporten er ikke fanget opp av oppskriften, eller mva avviker fra Checkin.",
+      hint: "Oppskriften fanger ikke opp alle beløpene i bilaget, eller mva avviker fra Checkin.",
     },
   ]
 }
@@ -210,7 +219,7 @@ export function applyCheckinVat(
       const netPrice = netFromGross(gross, line.vatType)
       if (netPrice === line.netPrice) return line
       adjusted.push(
-        `"${line.description}": netto ${formatNok(line.netPrice)} → ${formatNok(netPrice)}, så brutto blir ${formatNok(gross)} som hos Checkin (mva ${formatNok(gross - netPrice)}, Checkin ${formatNok(checkinVat)})`,
+        `"${line.description}": netto justert fra ${formatNok(line.netPrice)} til ${formatNok(netPrice)}, så summen blir ${formatNok(gross)} som hos Checkin. Mva blir ${formatNok(gross - netPrice)} (Checkin: ${formatNok(checkinVat)}).`,
       )
       return { ...line, netPrice, vat: gross - netPrice }
     })
@@ -236,13 +245,6 @@ export interface BookedLine {
   vatType: string
   netPrice: number
   vat: number
-}
-
-const VAT_LABELS: Record<string, string> = {
-  HIGH: "25 % mva",
-  MEDIUM: "15 % mva",
-  LOW: "12 % mva",
-  NONE: "uten mva",
 }
 
 function byAccountAndVat(
@@ -279,10 +281,10 @@ export function verifyBooked(
       const { account, vatType } = (w ?? h)!
       const label = `${name} ${account}, ${VAT_LABELS[vatType] ?? vatType}`
       const hint = !h
-        ? `Fant ikke linjen i Fiken. Sjekk at ${name.toLowerCase()}et er ført, på riktig konto og med riktig mva.`
+        ? `Fant ikke linjen i Fiken. Sjekk at ${name.toLowerCase()}et er ført, med riktig konto og mva.`
         : !w
-          ? "Linjen finnes ikke i bilaget. Sjekk konto og mva på føringen i Fiken."
-          : `Beløpet avviker. Sjekk om ${name.toLowerCase()}et er ført to ganger eller med feil beløp.`
+          ? "Linjen står ikke i bilaget. Sjekk konto og mva på føringen i Fiken."
+          : `Beløpet er ulikt. Sjekk om ${name.toLowerCase()}et er ført to ganger eller med feil beløp.`
       checks.push({
         label: `${label}: netto i Fiken mot bilaget`,
         expected: h?.net ?? 0,
@@ -311,12 +313,12 @@ export function verifyTransfersBooked(
   transfers: { voucher: string; date: string; amount: number; existing?: unknown }[],
 ): Check[] {
   return transfers.map((t) => ({
-    label: `Utbetaling ${t.date} (bilag ${t.voucher}) ført i Fiken`,
+    label: `Utbetaling ${t.date} (Checkin-bilag ${t.voucher}) ført i Fiken`,
     expected: t.existing ? t.amount : 0,
     actual: t.amount,
     ok: t.existing !== undefined,
     source: "Fiken",
-    hint: "Fant ingen postering på Checkin-kontoen med dette beløpet nær datoen.",
+    hint: "Fant ingen postering på Checkin-kontoen med dette beløpet rundt denne datoen.",
   }))
 }
 
@@ -336,12 +338,12 @@ export function reconcileBooked(
   if (paidOut !== undefined) {
     const movedOut = fiken.start - fiken.end + booked.sale - booked.purchase
     checks.push({
-      label: `Utbetalt til bank: Checkin ${config.payoutAccounts.join("+")} mot overført fra ${fiken.code} i Fiken`,
+      label: `Utbetalt til bank: Checkin ${config.payoutAccounts.join("+")} mot flyttet fra ${fiken.code} i Fiken`,
       expected: movedOut,
       actual: paidOut,
       ok: movedOut === paidOut,
       source: "Fiken",
-      hint: "En utbetaling mangler, er ført to ganger, med feil beløp, eller datert i en annen måned.",
+      hint: "En utbetaling mangler, er ført to ganger, har feil beløp eller er datert i en annen måned.",
     })
   }
   if (config.balanceAccounts) {
@@ -353,7 +355,7 @@ export function reconcileBooked(
         actual: held,
         ok: Math.abs(fiken.end - held) <= TOLERANCE_ORE,
         source: "Fiken",
-        hint: "Saldoen i Fiken stemmer ikke med det Checkin holder. Avviket kan også stamme fra en tidligere måned.",
+        hint: "Saldoen i Fiken stemmer ikke med det Checkin har til gode for oss. Avviket kan stamme fra en tidligere måned.",
       })
     }
   }

@@ -94,7 +94,7 @@ export async function completeLogin(params: URLSearchParams): Promise<void> {
 
   const { verifier, state } = JSON.parse(pending) as { verifier: string; state: string }
   if (params.get("state") !== state)
-    throw new Error("Ugyldig innlogging (state stemmer ikke). Prøv igjen.")
+    throw new Error("Klarte ikke å bekrefte innloggingen. Prøv igjen.")
   const code = params.get("code")
   if (!code) throw new Error("Fiken sendte ingen kode tilbake. Prøv igjen.")
 

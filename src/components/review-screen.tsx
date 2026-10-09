@@ -187,7 +187,7 @@ export function ReviewScreen({
       return book(client, config, prepared, fiken, mode, (step) => setProgress((p) => [...p, step]))
     },
     onSuccess: (_, mode) =>
-      toast.success(mode === "draft" ? "Utkast laget i Fiken" : "Ført i Fiken"),
+      toast.success(mode === "draft" ? "Utkastene ligger i Fiken" : "Bokført i Fiken"),
     onError: () => toast.error("Føringen stoppet"),
     onSettled: async () => {
       // Opening the bilag again should show what was booked, not the plan from before.
@@ -237,16 +237,18 @@ export function ReviewScreen({
         </div>
         <h1 className="mt-2 text-4xl">{title}</h1>
         {analysis.data?.audit ? (
-          <p className="mt-1 text-[var(--color-fg-base)]/80">Kontroll av det som er ført i Fiken</p>
+          <p className="mt-1 text-[var(--color-fg-base)]/80">
+            Måneden er ført. Her ser du om føringen stemmer med bilaget.
+          </p>
         ) : null}
         <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[var(--color-fg-base)]/60">
           <span>{companyName}</span>
           <span aria-hidden>·</span>
           <span className="break-all">{docName}</span>
           {selection.kind === "inbox" && selection.doc.used ? (
-            <Badge variant="outline">Brukt i Fiken</Badge>
+            <Badge variant="outline">Ført</Badge>
           ) : null}
-          {selection.kind === "file" ? <Badge variant="outline">Opplastet fil</Badge> : null}
+          {selection.kind === "file" ? <Badge variant="outline">Lokal fil</Badge> : null}
         </p>
       </header>
 
@@ -256,7 +258,7 @@ export function ReviewScreen({
           aria-busy="true"
         >
           <Spinner className="size-6" />
-          Leser bilaget og kontrollerer mot Fiken…
+          Leser bilaget og sjekker Fiken…
         </div>
       ) : null}
 
@@ -264,7 +266,7 @@ export function ReviewScreen({
         <Alert variant="destructive">
           <OctagonX aria-hidden />
           <AlertTitle>
-            {analysis.data ? "Fikk ikke oppdatert fra Fiken" : "Kunne ikke lese bilaget"}
+            {analysis.data ? "Klarte ikke å oppdatere fra Fiken" : "Klarte ikke å lese bilaget"}
           </AlertTitle>
           <AlertDescription>{analysis.error.message}</AlertDescription>
         </Alert>
@@ -332,30 +334,31 @@ function ConfirmDialog({
   const { plan } = prepared
   const newTransfers = fiken.transfers.filter((t) => !t.existing)
   const moved = newTransfers.reduce((s, t) => s + t.amount, 0)
-  const transfers =
-    newTransfers.length === 0
-      ? "Utbetalingene finnes allerede i Fiken."
-      : newTransfers.length === 1
-        ? `1 fri postering på ${formatNok(moved)} fra ${config.checkinAccount} til ${config.bankAccount}`
-        : `${newTransfers.length} fri posteringer på til sammen ${formatNok(moved)} fra ${config.checkinAccount} til ${config.bankAccount}`
+  const payouts =
+    newTransfers.length === 1
+      ? `Utbetalingen på ${formatNok(moved)}`
+      : `${newTransfers.length} utbetalinger på til sammen ${formatNok(moved)}`
+  const route = `fra ${config.checkinAccount} til ${config.bankAccount}`
 
   return (
     <AlertDialog open={mode !== undefined} onOpenChange={(open) => !open && onCancel()}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {mode === "draft" ? "Lage utkast i Fiken?" : "Bokføre i Fiken?"}
+            {mode === "draft" ? "Lag utkast i Fiken?" : "Bokfør i Fiken?"}
           </AlertDialogTitle>
           <AlertDialogDescription>
             {mode === "draft"
-              ? `Salg og kjøp for ${title} legges som utkast i ${companyName}.${
+              ? `Salg og kjøp for ${title} blir utkast i ${companyName}, med bilaget vedlagt. ${
                   newTransfers.length > 0
-                    ? ` ${transfers} føres som åpne bilag, som kan slettes uten motpostering.`
-                    : ` ${transfers}`
-                } Bilaget legges ved.`
-              : `Salg på ${formatNok(plan.sale.gross)} og kjøp på ${formatNok(plan.purchase.gross)} for ${title} føres i ${companyName}.${
-                  newTransfers.length > 0 ? ` I tillegg føres ${transfers}.` : ` ${transfers}`
-                } Bilaget legges ved.`}
+                    ? `${payouts} blir åpne fri posteringer ${route}. De kan slettes uten motpostering.`
+                    : "Utbetalingene er allerede ført."
+                }`
+              : `Salg på ${formatNok(plan.sale.gross)} og kjøp på ${formatNok(plan.purchase.gross)} for ${title} blir bokført i ${companyName}, med bilaget vedlagt. ${
+                  newTransfers.length > 0
+                    ? `${payouts} blir ført som fri posteringer ${route}.`
+                    : "Utbetalingene er allerede ført."
+                } Bokførte bilag kan bare rettes ved å annullere dem i Fiken.`}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -405,12 +408,12 @@ function Review({
           <SectionLabel
             aside={
               <span className="text-xs text-[var(--color-fg-base)]/60">
-                {fiken.transfers.filter((t) => !t.existing).length} av {fiken.transfers.length}{" "}
+                {fiken.transfers.filter((t) => !t.existing).length} av {fiken.transfers.length} skal
                 føres
               </span>
             }
           >
-            Fri posteringer
+            Utbetalinger
           </SectionLabel>
           {fiken.transfers.map((t) => (
             <TransferCard key={t.voucher} transfer={t} />
@@ -457,8 +460,8 @@ function Review({
             </Button>
           </div>
           <p className="text-xs text-[var(--color-fg-base)]/50">
-            Utkast lager salg og kjøp som utkast og de fri posteringene som åpne bilag. Bokfør fører
-            alt med en gang.
+            «Lag utkast» legger alt i Fiken uten å bokføre, så du kan se over der først. «Bokfør»
+            fører alt med en gang.
           </p>
         </div>
       ) : null}
@@ -495,15 +498,15 @@ function ReviewLayout({
           ) : (
             <Alert>
               <FileText aria-hidden />
-              <AlertTitle>Kunne ikke vise PDF-en</AlertTitle>
+              <AlertTitle>Klarte ikke å vise bilaget</AlertTitle>
               <AlertDescription>
-                Tallene under er lest fra bilaget. Åpne det i Fiken for å sammenligne.
+                Tallene er likevel lest. Åpne bilaget i Fiken for å sammenligne.
               </AlertDescription>
             </Alert>
           )}
           <p className="px-1 text-xs text-[var(--color-fg-base)]/50">
-            Tallene i kortene er merket med samme nummer og farge som i bilaget. Hold over eller
-            trykk på et nummer for å finne det.
+            Hvert tall har samme nummer her og i bilaget. Hold over eller trykk på et nummer for å
+            se hvor det står.
           </p>
         </div>
 
@@ -546,7 +549,7 @@ function AuditReview({ data: { prepared, audit, preview } }: { data: AuditAnalys
               </span>
             }
           >
-            Fri posteringer
+            Utbetalinger
           </SectionLabel>
           {audit.transfers.map((t) => (
             <TransferCard key={t.voucher} transfer={t} audit />
@@ -554,12 +557,12 @@ function AuditReview({ data: { prepared, audit, preview } }: { data: AuditAnalys
         </div>
       ) : null}
 
-      <ChecksCard checks={checks} blockers={[]} subtitle="Det som er ført i Fiken mot bilaget" />
+      <ChecksCard checks={checks} blockers={[]} subtitle="Føringen i Fiken mot bilaget" />
 
       <MappingDetails prepared={prepared} />
 
       <p className="text-xs text-[var(--color-fg-base)]/50">
-        Måneden er allerede ført, så ingenting føres herfra. Avvik rettes i Fiken.
+        Måneden er allerede ført, så her kan du bare kontrollere. Avvik retter du i Fiken.
       </p>
     </ReviewLayout>
   )
@@ -636,12 +639,12 @@ function Totals({
   const items = [
     { label: "Salg", value: plan.sale.gross },
     { label: "Kjøp", value: plan.purchase.gross },
-    { label: "Netto til Checkin", value: plan.expectedPayout },
+    { label: "Salg − kjøp", value: plan.expectedPayout },
   ]
   return (
     <section className="flex flex-col gap-3 rounded-xl bg-[var(--color-bg-surface)] p-4 sm:p-5">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-[var(--color-fg-base)]/60">Fakturadato {formatDay(plan.date)}</p>
+        <p className="text-sm text-[var(--color-fg-base)]/60">Bilagsdato {formatDay(plan.date)}</p>
         <StatusBadge blocked={blocked} failed={failed} />
       </div>
       <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-3">
@@ -674,7 +677,7 @@ const vatLabel = (vatType: string) =>
       ? "15 % mva"
       : vatType === "LOW"
         ? "12 % mva"
-        : "ingen mva"
+        : "uten mva"
 
 function SideCard({
   side,
@@ -775,7 +778,7 @@ function TransferCard({ transfer: t, audit = false }: { transfer: Transfer; audi
         </span>
         <div className={cn("min-w-0 flex-1", t.existing && "opacity-60")}>
           <h3 className="font-semibold leading-snug">{formatDay(t.date)}</h3>
-          <p className="text-sm text-[var(--color-fg-base)]/60">Bilag {t.voucher}</p>
+          <p className="text-sm text-[var(--color-fg-base)]/60">Checkin-bilag {t.voucher}</p>
         </div>
         <MarkedAmount
           marks={mark ? [mark] : []}
@@ -800,7 +803,7 @@ function TransferCard({ transfer: t, audit = false }: { transfer: Transfer; audi
         <div className="mt-3 flex flex-col gap-1.5">
           <Badge variant="secondary" className="text-[var(--color-fg-base)]/80">
             <CircleCheck aria-hidden />
-            {audit ? "Ført i Fiken" : "Finnes allerede – hoppes over"}
+            {audit ? "Ført i Fiken" : "Allerede ført"}
           </Badge>
           {t.existing.description ? (
             <p className="text-xs text-[var(--color-fg-base)]/50">
@@ -832,7 +835,7 @@ function AccountChip({ code, name }: { code: string; name: string }) {
 function ChecksCard({
   checks,
   blockers,
-  subtitle = "Mot bilaget selv og mot Checkin-kontoen i Fiken",
+  subtitle = "Tallene i bilaget mot hverandre og mot Checkin-kontoen i Fiken",
 }: {
   checks: Check[]
   blockers: string[]
@@ -925,11 +928,11 @@ function MappingDetails({ prepared }: { prepared: Prepared }) {
   return (
     <details className="group rounded-xl bg-[var(--color-bg-surface)]/60 p-4 text-sm sm:p-5">
       <summary className="cursor-pointer font-semibold text-[var(--color-fg-base)]/80">
-        Lest fra Checkin
+        Slik er bilaget lest
       </summary>
       <p className="mt-2 text-xs text-[var(--color-fg-base)]/50">
-        Netto endring per Checkin-konto. Kontonumrene brukes bare til å finne beløpene; alt føres på
-        våre kontoer.
+        Netto endring per konto i Checkins bilag, og hvor beløpet føres hos oss. Checkins kontonumre
+        brukes ikke i Fiken.
       </p>
       <ul className="mt-3 flex flex-col">
         {prepared.mapping.map((row) => {
@@ -941,9 +944,9 @@ function MappingDetails({ prepared }: { prepared: Prepared }) {
                   {row.checkinAccount}{" "}
                   <span className="text-[var(--color-fg-base)]/50">
                     {row.target === "ignored"
-                      ? "ignoreres"
+                      ? "føres ikke"
                       : row.target === "unmapped"
-                        ? "ikke i oppskriften"
+                        ? "mangler i oppskriften"
                         : `→ ${row.target.account} «${row.target.description}»`}
                   </span>
                 </span>
@@ -981,8 +984,8 @@ function BookingStatus({
           : error
             ? "Føringen stoppet"
             : mode === "draft"
-              ? "Utkast laget"
-              : "Ført i Fiken"}
+              ? "Utkastene ligger i Fiken"
+              : "Bokført i Fiken"}
       </SectionLabel>
       <section className="rounded-xl bg-[var(--color-bg-surface)] p-4 sm:p-5">
         <ul className="space-y-3">
@@ -1020,7 +1023,7 @@ function BookingStatus({
           {pending ? (
             <li className="flex items-center gap-3 text-[var(--color-fg-base)]/70">
               <Spinner className="size-5" />
-              Ikke lukk siden
+              Ikke lukk siden før føringen er ferdig
             </li>
           ) : null}
         </ul>
@@ -1029,10 +1032,10 @@ function BookingStatus({
       {error ? (
         <Alert variant="destructive">
           <OctagonX aria-hidden />
-          <AlertTitle>Et steg feilet</AlertTitle>
+          <AlertTitle>Fiken avviste et steg</AlertTitle>
           <AlertDescription>
             <p className="select-text break-all font-mono text-xs">{error.message}</p>
-            <p>Stegene merket ✓ er utført i Fiken. Fullfør eller rydd opp resten i Fiken.</p>
+            <p>Det som er merket ✓ ligger i Fiken. Resten må du føre eller rydde opp i Fiken.</p>
           </AlertDescription>
         </Alert>
       ) : null}
@@ -1040,7 +1043,7 @@ function BookingStatus({
       {mode === "draft" && result && (config.sale.accrual || config.purchase.accrual) ? (
         <Alert>
           <AlertDescription>
-            Utkast kan ikke periodiseres via API-et. Periodiser linjene når utkastene bokføres i
+            Utkast kan ikke periodiseres herfra. Periodiser linjene når du bokfører utkastene i
             Fiken.
           </AlertDescription>
         </Alert>

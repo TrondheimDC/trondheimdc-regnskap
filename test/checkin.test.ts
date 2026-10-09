@@ -205,7 +205,7 @@ test("reconciles payouts and balance of the Checkin account in Fiken", async () 
 
 test("rejects PDFs without result accounts", async () => {
   const empty = checkinPdf({ period: "mars 2026", balance: [], result: [], payouts: [] })
-  await expect(parseReportPdf(empty)).rejects.toThrow(/no result accounts/)
+  await expect(parseReportPdf(empty)).rejects.toThrow(/ingen resultatkontoer/)
 })
 
 test("accounts not covered by the recipe stop the run", () => {
