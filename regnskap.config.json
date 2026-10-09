@@ -8,42 +8,32 @@
       {
         "description": "TDC 2026",
         "vatType": "HIGH",
-        "from": [
-          "3000"
-        ]
+        "from": ["3000"]
       }
     ]
   },
   "purchase": {
     "account": "4300",
+    "supplier": {
+      "organizationNumber": "994035053"
+    },
     "lines": [
       {
         "description": "Checkin gebyr",
         "vatType": "HIGH",
-        "from": [
-          "4300"
-        ]
+        "from": ["4300"]
       },
       {
         "description": "Transaksjonsgebyr",
         "vatType": "NONE",
-        "from": [
-          "4335"
-        ]
+        "from": ["4335"]
       }
     ]
   },
-  "ignore": [
-    "3990"
-  ],
+  "ignore": ["3990"],
   "reconcile": {
-    "payoutAccounts": [
-      "1920"
-    ],
-    "balanceAccounts": [
-      "1500",
-      "1921"
-    ],
+    "payoutAccounts": ["1920"],
+    "balanceAccounts": ["1500", "1921"],
     "outputVat": {
       "HIGH": "2701"
     },

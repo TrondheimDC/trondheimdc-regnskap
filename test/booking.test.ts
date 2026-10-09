@@ -6,6 +6,7 @@ import { describe, expect, test } from "vitest"
 import {
   auditBooked,
   book,
+  bookable,
   type FikenState,
   findBooked,
   findReportDocument,
@@ -29,9 +30,15 @@ import type {
 import { reconcile } from "../src/lib/verify.ts"
 import { MARCH_2026 } from "./pdf-fixture.ts"
 
-const config = Config.parse(
+const recipe = Config.parse(
   JSON.parse(await readFile(new URL("../regnskap.config.json", import.meta.url), "utf8")),
 )
+// Without Checkin as a contact; "with a supplier" below covers that.
+const config = Config.parse({
+  ...recipe,
+  sale: { ...recipe.sale, customer: undefined },
+  purchase: { ...recipe.purchase, supplier: undefined },
+})
 const CHECKIN = config.checkinAccount // 1960:10001
 const BANK = config.bankAccount // 1920:10001
 
@@ -119,11 +126,13 @@ class FakeFiken implements Client {
   async inbox() {
     return [DOC]
   }
+  saleDraftList: { draftId: number; invoiceNumber?: string }[] = []
+  purchaseDraftList: { draftId: number; invoiceNumber?: string }[] = []
   async saleDrafts() {
-    return []
+    return this.saleDraftList
   }
   async purchaseDrafts() {
-    return []
+    return this.purchaseDraftList
   }
   async findSales(saleNumber: string) {
     return this.sales.filter((s) => s.saleNumber === saleNumber)
@@ -238,8 +247,10 @@ function withTransfers(p: Prepared, payouts: [voucher: string, date: string, amo
   }
 }
 
-const inspect = (fake: FakeFiken, p: Prepared, mode: "dry-run" | "draft" | "create" = "dry-run") =>
-  inspectFiken(fake.client, config, p, { mode, attach: true })
+const inspect = (fake: FakeFiken, p: Prepared) =>
+  inspectFiken(fake.client, config, p, { attach: true })
+
+const ALL = { sale: true, purchase: true, transfers: true }
 
 describe("prepare", () => {
   test("builds one fri postering per payout from the report", async () => {
@@ -389,32 +400,64 @@ describe("inspectFiken", () => {
     expect(state.transfers.map((t) => t.existing)).toEqual([undefined, undefined])
   })
 
-  test("blocks when the month is already booked or an account is missing", async () => {
+  test("blocks when an account is missing", async () => {
     const fake = new FakeFiken()
-    fake.sales.push({ saleId: 42, saleNumber: "Checkin 2026-03", lines: [] })
     const cfg = Config.parse({ ...config, bankAccount: "1920:10009" })
-    const state = await inspectFiken(fake.client, cfg, await prepared(), {
-      mode: "create",
-      attach: true,
-    })
-    expect(state.blockers).toEqual([
-      expect.stringMatching(/Bankkontoen 1920:10009 finnes ikke/),
-      expect.stringMatching(/allerede bokført \(id 42\)/),
-    ])
-    await expect(book(fake.client, cfg, await prepared(), state, "create")).rejects.toThrow(
+    const state = await inspectFiken(fake.client, cfg, await prepared(), { attach: true })
+    expect(state.blockers).toEqual([expect.stringMatching(/Bankkontoen 1920:10009 finnes ikke/)])
+    await expect(book(fake.client, cfg, await prepared(), state, "create", ALL)).rejects.toThrow(
       /Kan ikke føre/,
     )
     expect(fake.writes).toEqual([])
   })
+
+  test("a sale already booked is left out, and booking it again is refused", async () => {
+    const fake = new FakeFiken()
+    fake.sales.push({ saleId: 42, saleNumber: "Checkin 2026-03", lines: [] })
+    const p = await prepared()
+    const state = await inspect(fake, p)
+    expect(state.blockers).toEqual([])
+    expect(state.existing.sale).toMatchObject({ status: "booked", vouchers: [{ id: 42 }] })
+    expect(bookable(p, state)).toEqual({ sale: false, purchase: true, transfers: true })
+    await expect(book(fake.client, config, p, state, "create", ALL)).rejects.toThrow(
+      /Kan ikke føre salget/,
+    )
+    expect(fake.writes).toEqual([])
+  })
+
+  test("a draft with our reference counts as in Fiken", async () => {
+    const fake = new FakeFiken()
+    fake.purchaseDraftList.push({ draftId: 7, invoiceNumber: "Checkin 2026-03" })
+    const p = await prepared()
+    const state = await inspect(fake, p)
+    expect(state.existing).toEqual({ purchase: { status: "draft", draftId: 7 } })
+    expect(bookable(p, state).purchase).toBe(false)
+  })
+
+  test("blocks when everything is in Fiken already", async () => {
+    const fake = new FakeFiken()
+    const p = await prepared()
+    await book(fake.client, config, p, await inspect(fake, p), "create", ALL)
+    const state = await inspect(fake, p)
+    expect(bookable(p, state)).toEqual({ sale: false, purchase: false, transfers: false })
+    expect(state.blockers).toEqual([expect.stringMatching(/ligger allerede i Fiken/)])
+  })
 })
 
 describe("book", () => {
-  async function run(fake: FakeFiken, mode: "draft" | "create", p?: Prepared, cfg = config) {
+  async function run(
+    fake: FakeFiken,
+    mode: "draft" | "create",
+    p?: Prepared,
+    cfg = config,
+    parts?: Partial<typeof ALL>,
+  ) {
     const prep = p ?? (await prepared(cfg))
-    const state: FikenState = await inspectFiken(fake.client, cfg, prep, { mode, attach: true })
+    const state: FikenState = await inspectFiken(fake.client, cfg, prep, { attach: true })
     expect(state.blockers).toEqual([])
     const steps: string[] = []
-    const result = await book(fake.client, cfg, prep, state, mode, (s) => steps.push(s))
+    const chosen = { ...bookable(prep, state), ...parts }
+    const result = await book(fake.client, cfg, prep, state, mode, chosen, (s) => steps.push(s))
     expect(result.steps).toEqual(steps)
     return result
   }
@@ -535,16 +578,65 @@ describe("book", () => {
     const p = await prepared()
     // As if the sale and purchase were deleted after the first run, but the entries kept.
     for (const t of p.transfers) fake.addTransfer(t.date, t.amount, { description: t.description })
-    const state = await inspect(fake, p, "create")
+    const state = await inspect(fake, p)
     expect(state.transfers.every((t) => t.existing)).toBe(true)
+  })
+
+  test("sale and purchase only: the payouts are left for later", async () => {
+    const fake = new FakeFiken()
+    const result = await run(fake, "create", undefined, config, { transfers: false })
+    expect(fake.written("journalEntry")).toEqual([])
+    expect(result.balance).toEqual({
+      actual: FEB_BALANCE + SALE_GROSS - PURCHASE_GROSS,
+      expected: FEB_BALANCE + SALE_GROSS - PURCHASE_GROSS,
+    })
+    // Next time only the payouts are left, and the month adds up.
+    const p = await prepared()
+    const state = await inspect(fake, p)
+    expect(bookable(p, state)).toEqual({ sale: false, purchase: false, transfers: true })
+    expect(state.checks.map((c) => c.ok)).toEqual([true, true])
+  })
+
+  test("rebooks only an annulled purchase", async () => {
+    const fake = new FakeFiken()
+    const p = await prepared()
+    await book(fake.client, config, p, await inspect(fake, p), "create", ALL)
+    // The purchase was wrong and is annulled in Fiken.
+    fake.purchases[0]!.deleted = true
+    fake.ledger.push({ date: "2026-03-31", amount: PURCHASE_GROSS })
+
+    const state = await inspect(fake, p)
+    expect(bookable(p, state)).toEqual({ sale: false, purchase: true, transfers: false })
+    expect(state.checks.map((c) => c.ok)).toEqual([true, true])
+    const before = fake.writes.length
+    const result = await book(fake.client, config, p, state, "create", {
+      sale: false,
+      purchase: true,
+      transfers: false,
+    })
+    expect(fake.writes.slice(before).map((w) => w.kind)).toEqual(["purchase", "attach:purchase"])
+    expect(result.balance).toEqual({ actual: HELD_AFTER, expected: HELD_AFTER })
+  })
+
+  test("refuses to book nothing", async () => {
+    const fake = new FakeFiken()
+    const p = await prepared()
+    const state = await inspect(fake, p)
+    await expect(
+      book(fake.client, config, p, state, "create", {
+        sale: false,
+        purchase: false,
+        transfers: false,
+      }),
+    ).rejects.toThrow(/Ingenting/)
   })
 })
 
 describe("auditBooked", () => {
   async function booked(fake: FakeFiken) {
     const p = await prepared()
-    const state = await inspectFiken(fake.client, config, p, { mode: "create", attach: true })
-    await book(fake.client, config, p, state, "create")
+    const state = await inspectFiken(fake.client, config, p, { attach: true })
+    await book(fake.client, config, p, state, "create", ALL)
     return p
   }
 

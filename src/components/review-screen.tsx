@@ -51,9 +51,13 @@ import {
   type BookedVoucher,
   type BookResult,
   book,
+  bookable,
+  type Existing,
   type FikenState,
-  findBooked,
   inspectFiken,
+  PARTS,
+  type Part,
+  type Parts,
   type Prepared,
   prepare,
   type ReportDocument,
@@ -67,7 +71,7 @@ import { buildMarks, checkKeys, lineKeys, payoutKey, vatKey } from "@/lib/marks"
 import { renderPdfPage } from "@/lib/pdf-render"
 import { formatNok } from "@/lib/plan"
 import { cn } from "@/lib/utils"
-import type { Check } from "@/lib/verify"
+import { type Check, explainRounding } from "@/lib/verify"
 
 export type Selection = { kind: "inbox"; doc: ReportDocument } | { kind: "file"; file: File }
 
@@ -88,7 +92,7 @@ async function analyze(client: Fiken, selection: Selection) {
   const prepared = prepare(source, config)
   const summaryPage = Math.min(...Object.values(source.boxes).map((b) => b.page))
   const [state, preview] = await Promise.all([
-    inspect(client, prepared, selection.kind === "inbox" && selection.doc.used),
+    inspect(client, prepared),
     // The page is only an aid for checking; the review works without it.
     Number.isFinite(summaryPage)
       ? renderPdfPage(pdf, summaryPage).catch(() => undefined)
@@ -97,17 +101,34 @@ async function analyze(client: Fiken, selection: Selection) {
   return { prepared, ...state, pdf, preview }
 }
 
-/** A used bilag, or a month with anything booked already, is checked against Fiken instead of booked. */
+/**
+ * A month with everything booked is checked against Fiken. Otherwise what is missing can be
+ * booked; drafts left in Fiken keep the month here, so they are not mistaken for booked.
+ */
 async function inspect(
   client: Fiken,
   prepared: Prepared,
-  used: boolean,
 ): Promise<{ audit: Audit; fiken?: undefined } | { fiken: FikenState; audit?: undefined }> {
-  const booked = await findBooked(client, config, prepared)
-  if (used || booked.sales.length > 0 || booked.purchases.length > 0)
-    return { audit: await auditBooked(client, config, prepared, booked) }
-  // Draft mode also blocks on existing drafts, so a month can't end up both drafted and booked.
-  return { fiken: await inspectFiken(client, config, prepared, { mode: "draft", attach: true }) }
+  const fiken = await inspectFiken(client, config, prepared, { attach: true })
+  const { sale, purchase } = fiken.existing
+  const vouchers = (e?: Existing) => (e?.status === "booked" ? e.vouchers : [])
+  if (
+    Object.values(bookable(prepared, fiken)).some(Boolean) ||
+    sale?.status === "draft" ||
+    purchase?.status === "draft"
+  )
+    return { fiken }
+  return {
+    audit: await auditBooked(client, config, prepared, {
+      sales: vouchers(sale),
+      purchases: vouchers(purchase),
+    }),
+  }
+}
+
+/** The parts to book: what is left in Fiken, minus what the user unticked. */
+function chosenParts(open: Parts, picked: Partial<Parts>): Parts {
+  return Object.fromEntries(PARTS.map((p) => [p, open[p] && (picked[p] ?? true)])) as Parts
 }
 
 type Analysis = Awaited<ReturnType<typeof analyze>> & { fiken: FikenState }
@@ -178,14 +199,20 @@ export function ReviewScreen({
   })
 
   const [override, setOverride] = useState(false)
+  const [picked, setPicked] = useState<Partial<Parts>>({})
   const [confirming, setConfirming] = useState<BookMode>()
   const [progress, setProgress] = useState<string[]>([])
+  const parts =
+    analysis.data?.fiken &&
+    chosenParts(bookable(analysis.data.prepared, analysis.data.fiken), picked)
   const booking = useMutation({
     mutationFn: (mode: BookMode) => {
       const { prepared, fiken } = analysis.data ?? {}
-      if (!prepared || !fiken) throw new Error("Bilaget er ikke lest ennå")
+      if (!prepared || !fiken || !parts) throw new Error("Bilaget er ikke lest ennå")
       setProgress([])
-      return book(client, config, prepared, fiken, mode, (step) => setProgress((p) => [...p, step]))
+      return book(client, config, prepared, fiken, mode, parts, (step) =>
+        setProgress((p) => [...p, step]),
+      )
     },
     onSuccess: (_, mode) =>
       toast.success(mode === "draft" ? "Utkastene ligger i Fiken" : "Bokført i Fiken"),
@@ -277,9 +304,11 @@ export function ReviewScreen({
         <AuditReview data={{ ...analysis.data, audit: analysis.data.audit }} />
       ) : null}
 
-      {analysis.data?.fiken && !bookingStarted ? (
+      {analysis.data?.fiken && parts && !bookingStarted ? (
         <Review
           data={{ ...analysis.data, fiken: analysis.data.fiken }}
+          parts={parts}
+          onPart={(part, on) => setPicked((p) => ({ ...p, [part]: on }))}
           override={override}
           onOverride={setOverride}
           onBook={setConfirming}
@@ -300,9 +329,10 @@ export function ReviewScreen({
         </div>
       ) : null}
 
-      {analysis.data?.fiken ? (
+      {analysis.data?.fiken && parts ? (
         <ConfirmDialog
           data={{ ...analysis.data, fiken: analysis.data.fiken }}
+          parts={parts}
           mode={confirming}
           title={title}
           companyName={companyName}
@@ -319,6 +349,7 @@ export function ReviewScreen({
 
 function ConfirmDialog({
   data: { prepared, fiken },
+  parts,
   mode,
   title,
   companyName,
@@ -326,6 +357,7 @@ function ConfirmDialog({
   onConfirm,
 }: {
   data: Analysis
+  parts: Parts
   mode?: BookMode
   title: string
   companyName: string
@@ -340,6 +372,17 @@ function ConfirmDialog({
       ? `Utbetalingen på ${formatNok(moved)}`
       : `${newTransfers.length} utbetalinger på til sammen ${formatNok(moved)}`
   const route = `fra ${config.checkinAccount} til ${config.bankAccount}`
+  const vouchers = [
+    parts.sale && `salg på ${formatNok(plan.sale.gross)}`,
+    parts.purchase && `kjøp på ${formatNok(plan.purchase.gross)}`,
+  ].filter((v) => typeof v === "string")
+  const what = vouchers.join(" og ")
+  const capitalized = what.charAt(0).toUpperCase() + what.slice(1)
+  const transfers = parts.transfers
+    ? mode === "draft"
+      ? `${payouts} blir åpne fri posteringer ${route}. De kan slettes uten motpostering.`
+      : `${payouts} blir ført som fri posteringer ${route}.`
+    : ""
 
   return (
     <AlertDialog open={mode !== undefined} onOpenChange={(open) => !open && onCancel()}>
@@ -349,17 +392,14 @@ function ConfirmDialog({
             {mode === "draft" ? "Lag utkast i Fiken?" : "Bokfør i Fiken?"}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {mode === "draft"
-              ? `Salg og kjøp for ${title} blir utkast i ${companyName}, med bilaget vedlagt. ${
-                  newTransfers.length > 0
-                    ? `${payouts} blir åpne fri posteringer ${route}. De kan slettes uten motpostering.`
-                    : "Utbetalingene er allerede ført."
-                }`
-              : `Salg på ${formatNok(plan.sale.gross)} og kjøp på ${formatNok(plan.purchase.gross)} for ${title} blir bokført i ${companyName}, med bilaget vedlagt. ${
-                  newTransfers.length > 0
-                    ? `${payouts} blir ført som fri posteringer ${route}.`
-                    : "Utbetalingene er allerede ført."
-                } Bokførte bilag kan bare rettes ved å annullere dem i Fiken.`}
+            {[
+              what &&
+                `${capitalized} for ${title} blir ${mode === "draft" ? "utkast" : "bokført"} i ${companyName}, med bilaget vedlagt.`,
+              transfers,
+              mode === "create" && "Bokførte bilag kan bare rettes ved å annullere dem i Fiken.",
+            ]
+              .filter(Boolean)
+              .join(" ")}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -375,12 +415,16 @@ function ConfirmDialog({
 
 function Review({
   data,
+  parts,
+  onPart,
   override,
   onOverride,
   onBook,
   disabled,
 }: {
   data: Analysis
+  parts: Parts
+  onPart: (part: Part, on: boolean) => void
   override: boolean
   onOverride: (v: boolean) => void
   onBook: (mode: BookMode) => void
@@ -390,7 +434,8 @@ function Review({
   const checks = [...prepared.checks, ...fiken.checks]
   const failed = checks.filter((c) => !c.ok).length
   const blocked = fiken.blockers.length > 0
-  const canBook = !blocked && (failed === 0 || override) && !disabled
+  const anything = PARTS.some((p) => parts[p])
+  const canBook = !blocked && anything && (failed === 0 || override) && !disabled
 
   return (
     <ReviewLayout prepared={prepared} preview={preview}>
@@ -399,7 +444,7 @@ function Review({
       <div className="flex flex-col gap-3">
         <SectionLabel>Salg og kjøp</SectionLabel>
         <SideCard side="sale" prepared={prepared} fiken={fiken} />
-        {prepared.plan.purchase.lines.length > 0 ? (
+        {prepared.plan.purchase.lines.length > 0 || fiken.existing.purchase ? (
           <SideCard side="purchase" prepared={prepared} fiken={fiken} />
         ) : null}
       </div>
@@ -428,6 +473,7 @@ function Review({
 
       {!blocked ? (
         <div className="flex flex-col gap-3">
+          <PartsCard prepared={prepared} fiken={fiken} parts={parts} onPart={onPart} />
           {failed > 0 ? (
             <div className="flex items-start gap-3 rounded-xl bg-[var(--color-bg-surface)] px-4 py-3.5">
               <Checkbox
@@ -461,12 +507,98 @@ function Review({
             </Button>
           </div>
           <p className="text-xs text-[var(--color-fg-base)]/50">
-            «Lag utkast» legger alt i Fiken uten å bokføre, så du kan se over der først. «Bokfør»
-            fører alt med en gang.
+            «Lag utkast» legger det valgte i Fiken uten å bokføre, så du kan se over der først.
+            «Bokfør» fører det med en gang.
           </p>
         </div>
       ) : null}
     </ReviewLayout>
+  )
+}
+
+const existingText = (e: Existing) =>
+  e.status === "draft" ? "Ligger som utkast i Fiken" : "Allerede bokført i Fiken"
+
+/** Which parts of the month to book now. A part already in Fiken can't be picked. */
+function PartsCard({
+  prepared,
+  fiken,
+  parts,
+  onPart,
+}: {
+  prepared: Prepared
+  fiken: FikenState
+  parts: Parts
+  onPart: (part: Part, on: boolean) => void
+}) {
+  const open = bookable(prepared, fiken)
+  const newTransfers = fiken.transfers.filter((t) => !t.existing)
+  const rows: { part: Part; label: string; amount?: number; note?: string }[] = [
+    {
+      part: "sale",
+      label: "Salg",
+      amount: prepared.plan.sale.gross,
+      note: fiken.existing.sale && existingText(fiken.existing.sale),
+    },
+    ...(prepared.plan.purchase.lines.length > 0 || fiken.existing.purchase
+      ? [
+          {
+            part: "purchase" as const,
+            label: "Kjøp",
+            amount: prepared.plan.purchase.gross,
+            note: fiken.existing.purchase && existingText(fiken.existing.purchase),
+          },
+        ]
+      : []),
+    ...(fiken.transfers.length > 0
+      ? [
+          {
+            part: "transfers" as const,
+            label: newTransfers.length === 1 ? "Utbetaling" : `${newTransfers.length} utbetalinger`,
+            amount: newTransfers.reduce((s, t) => s + t.amount, 0),
+            note: open.transfers ? "Fri postering til bank" : "Allerede ført i Fiken",
+          },
+        ]
+      : []),
+  ]
+
+  return (
+    <Card
+      icon={<ListChecks />}
+      title="Dette føres"
+      subtitle="Fjern haken for det du vil føre senere."
+    >
+      <ul className="mt-4 flex flex-col gap-1">
+        {rows.map(({ part, label, amount, note }) => (
+          <li key={part}>
+            <Label
+              htmlFor={`part-${part}`}
+              className={cn(
+                "flex items-start gap-3 rounded-lg px-1 py-2 font-normal",
+                !open[part] && "opacity-60",
+              )}
+            >
+              <Checkbox
+                id={`part-${part}`}
+                checked={parts[part]}
+                disabled={!open[part]}
+                onCheckedChange={(v) => onPart(part, v === true)}
+                className="mt-0.5"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block font-semibold">{label}</span>
+                {note ? (
+                  <span className="block text-sm text-[var(--color-fg-base)]/60">{note}</span>
+                ) : null}
+              </span>
+              {amount !== undefined && open[part] ? (
+                <span className="tabular shrink-0">{formatNok(amount)}</span>
+              ) : null}
+            </Label>
+          </li>
+        ))}
+      </ul>
+    </Card>
   )
 }
 
@@ -692,8 +824,8 @@ function SideCard({
   const { plan, adjusted } = prepared
   const { lines, gross } = plan[side]
   const contact = side === "sale" ? fiken.customer : fiken.supplier
-  const descriptions = new Set(lines.map((l) => l.description))
-  const notes = adjusted.filter((a) => [...descriptions].some((d) => a.startsWith(`"${d}"`)))
+  const notes = adjusted.filter((r) => r.side === side)
+  const existing = fiken.existing[side]
 
   return (
     <Card
@@ -715,8 +847,8 @@ function SideCard({
       </ul>
       {notes.length > 0 ? (
         <ul className="mt-2 space-y-1 text-xs text-[var(--color-fg-base)]/50">
-          {notes.map((a) => (
-            <li key={a}>Øreavrunding: {a}</li>
+          {notes.map((r) => (
+            <li key={r.description}>Øreavrunding: {explainRounding(r)}</li>
           ))}
         </ul>
       ) : null}
@@ -726,6 +858,12 @@ function SideCard({
           {formatNok(gross)}
         </MarkedAmount>
       </div>
+      {existing ? (
+        <Badge variant="secondary" className="mt-3 text-[var(--color-fg-base)]/80">
+          <CircleCheck aria-hidden />
+          {existingText(existing)}
+        </Badge>
+      ) : null}
     </Card>
   )
 }

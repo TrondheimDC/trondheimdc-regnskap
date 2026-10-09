@@ -2,10 +2,12 @@ import { readFile } from "node:fs/promises"
 import { expect, test } from "vitest"
 import { parseAmount, parseAmountsArg, parseReportPdf, toReport } from "../src/lib/checkin.ts"
 import { Config } from "../src/lib/config.ts"
-import { buildPlan, lastDayOfMonth } from "../src/lib/plan.ts"
+import { buildPlan, formatNok, lastDayOfMonth } from "../src/lib/plan.ts"
 import {
   applyCheckinVat,
+  explainRounding,
   reconcile,
+  roundingLineText,
   verifyNet,
   verifyPayoutList,
   verifyPlan,
@@ -119,7 +121,20 @@ test("keeps Checkin's gross with a net Fiken accepts", () => {
   )
   expect(booked.purchase.lines[0]).toMatchObject({ netPrice: 213979, vat: 53495 })
   expect(booked.purchase.gross).toBe(267474)
-  expect(adjusted).toHaveLength(1)
+  expect(adjusted).toEqual([
+    {
+      side: "purchase",
+      description: "Gebyr",
+      checkin: { net: 213975, vat: 53499 },
+      booked: { net: 213979, vat: 53495 },
+    },
+  ])
+  expect(roundingLineText(adjusted[0]!)).toBe(
+    `Gebyr (øreavrunding, mva hos Checkin ${formatNok(53499)})`,
+  )
+  expect(explainRounding(adjusted[0]!)).toBe(
+    `Gebyr: mva ${formatNok(53495)}, Checkin ${formatNok(53499)}. Sum inkl. mva er lik.`,
+  )
 })
 
 test("flags VAT on the wrong side of Checkin's for Skatteetaten", () => {

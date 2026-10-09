@@ -9,10 +9,15 @@ import { z } from "zod"
 import {
   auditBooked,
   book,
+  bookable,
+  type Existing,
   findReportDocument,
   inspectFiken,
   listReportDocuments,
   type MappingRow,
+  PARTS,
+  type Part,
+  type Parts,
   prepare,
   type ReportSource,
   resolveCompany,
@@ -21,7 +26,7 @@ import { parseAmountsArg, parseReportPdf } from "../lib/checkin.ts"
 import { type Config, Month, parseConfig } from "../lib/config.ts"
 import { Fiken, type InboxDocument } from "../lib/fiken.ts"
 import { formatMonthNo, formatNok } from "../lib/plan.ts"
-import type { Check } from "../lib/verify.ts"
+import { type Check, explainRounding } from "../lib/verify.ts"
 import { createAuth, hasCredentials, login, logout } from "./auth.ts"
 
 const HELP = `Usage: pnpm foring <command> [options]
@@ -41,6 +46,8 @@ Commands:
 Options:
   --mode <m>          dry-run (default), draft or create
   --yes               Skip the confirmation prompt (only if all checks pass)
+  --only <parts>      report: book only these, comma-separated: salg, kjop, utbetalinger
+                      (default: whatever is not in Fiken yet)
   --month <YYYY-MM>   Report month (report: read from the PDF if not given)
   --amounts <list>    report: net amounts per Checkin account instead of the PDF,
                       e.g. "3000=427521.63,4300=5163.44,4335=24711.53"
@@ -61,6 +68,7 @@ const { values: rawOpts, positionals } = parseArgs({
   options: {
     mode: { type: "string", default: "dry-run" },
     yes: { type: "boolean", short: "y", default: false },
+    only: { type: "string" },
     month: { type: "string" },
     amounts: { type: "string" },
     "inbox-doc": { type: "string" },
@@ -74,6 +82,11 @@ const { values: rawOpts, positionals } = parseArgs({
 const Options = z.object({
   mode: z.enum(["dry-run", "draft", "create"]),
   yes: z.boolean(),
+  only: z
+    .string()
+    .transform((s) => s.split(",").map((p) => p.trim().toLowerCase()))
+    .pipe(z.array(z.enum(["salg", "kjop", "kjøp", "utbetalinger"])).min(1))
+    .optional(),
   month: Month.optional(),
   amounts: z.string().optional(),
   "inbox-doc": z.coerce.number().int().positive().optional(),
@@ -134,6 +147,24 @@ function printAccrual(accrual: Config["sale"]["accrual"]) {
       `  Periodiseres mot ${accrual.account}, start ${accrual.startDate}, ${accrual.periods} måned(er)`,
     )
   }
+}
+
+const PART_LABELS: Record<Part, string> = {
+  sale: "Salg",
+  purchase: "Kjøp",
+  transfers: "Utbetalinger",
+}
+const PART_ARGS: Record<string, Part> = {
+  salg: "sale",
+  kjop: "purchase",
+  kjøp: "purchase",
+  utbetalinger: "transfers",
+}
+
+function describeExisting(e: Existing) {
+  return e.status === "draft"
+    ? `ligger som utkast (id ${e.draftId})`
+    : `er bokført (${e.vouchers.map((v) => `«${v.number ?? ""}» id ${v.id}`).join(", ")})`
 }
 
 function printMapping(rows: MappingRow[]) {
@@ -268,7 +299,7 @@ async function report() {
     printLines("Kjøp", plan.purchase.lines, plan.purchase.gross)
     printAccrual(config.purchase.accrual)
   }
-  for (const a of prepared.adjusted) console.log(`  Øreavrunding: ${a}`)
+  for (const r of prepared.adjusted) console.log(`  Øreavrunding: ${explainRounding(r)}`)
   console.log(`\nSalg − kjøp: ${formatNok(plan.expectedPayout)}`)
 
   console.log("\nKontroller mot bilaget")
@@ -283,7 +314,7 @@ async function report() {
   }
 
   // 3. Read-only checks against Fiken.
-  const state = await inspectFiken(client, config, prepared, { mode, attach: !opts["no-attach"] })
+  const state = await inspectFiken(client, config, prepared, { attach: !opts["no-attach"] })
   console.log(
     `\nFiken: ${state.company.name} (${state.company.slug})${state.company.testCompany ? " [testselskap]" : ""}`,
   )
@@ -297,8 +328,11 @@ async function report() {
       `Leverandør på kjøpet: ${state.supplier.name} (${state.supplier.accountCode ?? state.supplier.contactId})`,
     )
   for (const b of state.blockers) warn(b)
-  if (state.blockers.length === 0)
-    step(`Bankkontoene finnes, og ${formatMonthNo(month)} er ikke ført ennå`)
+  if (state.blockers.length === 0) step("Bankkontoene finnes")
+  for (const side of ["sale", "purchase"] as const) {
+    const e = state.existing[side]
+    if (e) step(`${PART_LABELS[side]} «${reference}» ${describeExisting(e)}, føres ikke igjen`)
+  }
 
   console.log(`\nUtbetalinger (${config.checkinAccount} → ${config.bankAccount})`)
   if (state.transfers.length === 0) console.log("  (ingen utbetalinger i bilaget)")
@@ -316,23 +350,42 @@ async function report() {
   checksOk = printChecks(state.checks) && checksOk
 
   if (state.blockers.length > 0) fail("Kan ikke føre, se ✗ over.")
+
+  // What to book: by default everything not in Fiken yet; --only narrows it.
+  const open = bookable(prepared, state)
+  const only = opts.only?.map((p) => PART_ARGS[p]!)
+  for (const part of only ?? [])
+    if (!open[part]) fail(`${PART_LABELS[part]} ligger allerede i Fiken eller er tomt`)
+  const parts = Object.fromEntries(
+    PARTS.map((p) => [p, only ? only.includes(p) : open[p]]),
+  ) as Parts
+  console.log(
+    `\nFøres: ${PARTS.filter((p) => parts[p])
+      .map((p) => PART_LABELS[p].toLowerCase())
+      .join(", ")}`,
+  )
+  for (const p of PARTS.filter((p) => open[p] && !parts[p]))
+    console.log(`  (${PART_LABELS[p].toLowerCase()} føres ikke nå, se --only)`)
+
   if (mode === "dry-run") {
     console.log("\nDry run: ingenting er skrevet til Fiken. Bruk --mode draft eller --mode create.")
     return
   }
 
   // 4–5. Confirm, then write.
-  const what =
-    mode === "draft"
-      ? "Lag utkast (og åpne fri posteringer) i Fiken"
-      : "Bokfør salg, kjøp og fri posteringer i Fiken"
+  const chosen = [
+    parts.sale && "salg",
+    parts.purchase && "kjøp",
+    parts.transfers && (mode === "draft" ? "åpne fri posteringer" : "fri posteringer"),
+  ].filter(Boolean)
+  const what = `${mode === "draft" ? "Lag utkast for" : "Bokfør"} ${chosen.join(", ")} i Fiken`
   if (!(await confirm(what, checksOk))) {
     console.log("Avbrutt, ingenting er skrevet til Fiken.")
     return
   }
 
   console.log("")
-  const result = await book(client, config, prepared, state, mode, step)
+  const result = await book(client, config, prepared, state, mode, parts, step)
   if (mode === "draft" && (config.sale.accrual || config.purchase.accrual)) {
     console.log(
       "\nUtkast kan ikke periodiseres herfra. Periodiser linjene når du bokfører utkastene i Fiken.",

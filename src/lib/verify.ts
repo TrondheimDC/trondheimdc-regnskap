@@ -106,8 +106,9 @@ const sumAccounts = (accounts: string[], from: Movements) =>
     : undefined
 
 /**
- * Reconciles our Checkin account in Fiken (e.g. 1960:10001) against the report, counting what
- * this run will book (`newTransfers`: payouts not yet moved to the bank in Fiken):
+ * Reconciles our Checkin account in Fiken (e.g. 1960:10001) against the report, as it will be
+ * once the whole month is in Fiken (`newTransfers`: payouts not yet moved to the bank in Fiken;
+ * `booked`: gross of a sale or purchase for the month already booked, which is not booked again):
  * - money moved out of the account this month (already in Fiken + new fri posteringer) must equal
  *   what Checkin paid out to our bank, and
  * - optionally, the balance after booking must equal what Checkin says it holds for us.
@@ -118,11 +119,14 @@ export function reconcile(
   fiken: FikenCheckinAccount,
   config: { payoutAccounts: string[]; balanceAccounts?: string[] },
   newTransfers = 0,
+  booked: { sale?: number; purchase?: number } = {},
 ): Check[] {
   const checks: Check[] = []
   const paidOut = sumAccounts(config.payoutAccounts, report.balance)
   if (paidOut !== undefined) {
-    const movedOut = fiken.start - fiken.end + newTransfers
+    // A sale or purchase already booked is in `end` too; only payouts count as moved out.
+    const movedOut =
+      fiken.start - fiken.end + (booked.sale ?? 0) - (booked.purchase ?? 0) + newTransfers
     checks.push({
       label: `Utbetalt til bank: Checkin ${config.payoutAccounts.join("+")} mot flyttet fra ${fiken.code} i Fiken`,
       expected: movedOut,
@@ -136,7 +140,11 @@ export function reconcile(
   if (config.balanceAccounts) {
     const held = sumAccounts(config.balanceAccounts, report.closing)
     if (held !== undefined) {
-      const after = fiken.end + plan.sale.gross - plan.purchase.gross - newTransfers
+      const after =
+        fiken.end +
+        (booked.sale === undefined ? plan.sale.gross : 0) -
+        (booked.purchase === undefined ? plan.purchase.gross : 0) -
+        newTransfers
       checks.push({
         label: `Saldo etter føring: ${fiken.code} i Fiken mot Checkin ${config.balanceAccounts.join("+")}`,
         expected: after,
@@ -194,19 +202,47 @@ export function verifyNet(
 }
 
 /**
+ * A line booked with a net and VAT a few øre off Checkin's, with the same gross.
+ *
+ * Checkin rounds VAT on every ticket and fee and sums it, so its VAT is not exactly 25 % of its
+ * net. Fiken computes VAT from the line and rejects any other amount (net must be gross / 1,25).
+ * We keep Checkin's gross so the Checkin account matches to the øre, and let net and VAT move.
+ */
+export interface Rounding {
+  side: "sale" | "purchase"
+  description: string
+  checkin: { net: number; vat: number }
+  booked: { net: number; vat: number }
+}
+
+/** Short note for the review screen and CLI. */
+export function explainRounding(r: Rounding): string {
+  return `${r.description}: mva ${formatNok(r.booked.vat)}, Checkin ${formatNok(r.checkin.vat)}. Sum inkl. mva er lik.`
+}
+
+/** Line text in Fiken, so the voucher itself explains the difference from the attachment. */
+export function roundingLineText(r: Rounding): string {
+  return `${r.description} (øreavrunding, mva hos Checkin ${formatNok(r.checkin.vat)})`
+}
+
+/**
  * Books the gross Checkin actually charged (net + Checkin's VAT) instead of net + 25 %, so the
- * Checkin account in Fiken matches Checkin to the øre. Fiken only accepts net = gross / 1.25, so
- * the net is recomputed from the gross and the rounding moves between net and VAT. Only applied
- * when one line has that VAT type and the difference is rounding (≤ 1 kr); bigger differences
- * are left for the checks to flag.
+ * Checkin account in Fiken matches Checkin to the øre. See `Rounding`. Only applied when one line
+ * has that VAT type and the difference is rounding (≤ 1 kr); bigger differences are left for the
+ * checks to flag.
  */
 export function applyCheckinVat(
   plan: Plan,
   balance: Movements,
   vatAccounts: VatAccounts,
-): { plan: Plan; adjusted: string[] } {
-  const adjusted: string[] = []
-  const adopt = (lines: Plan["sale"]["lines"], accounts: VatAccounts["outputVat"], sign: number) =>
+): { plan: Plan; adjusted: Rounding[] } {
+  const adjusted: Rounding[] = []
+  const adopt = (
+    side: Rounding["side"],
+    lines: Plan["sale"]["lines"],
+    accounts: VatAccounts["outputVat"],
+    sign: number,
+  ) =>
     lines.map((line) => {
       const account = accounts[line.vatType]
       const reported = account === undefined ? undefined : balance.get(account)
@@ -218,14 +254,17 @@ export function applyCheckinVat(
       const gross = line.netPrice + checkinVat
       const netPrice = netFromGross(gross, line.vatType)
       if (netPrice === line.netPrice) return line
-      adjusted.push(
-        `"${line.description}": netto justert fra ${formatNok(line.netPrice)} til ${formatNok(netPrice)}, så summen blir ${formatNok(gross)} som hos Checkin. Mva blir ${formatNok(gross - netPrice)} (Checkin: ${formatNok(checkinVat)}).`,
-      )
+      adjusted.push({
+        side,
+        description: line.description,
+        checkin: { net: line.netPrice, vat: checkinVat },
+        booked: { net: netPrice, vat: gross - netPrice },
+      })
       return { ...line, netPrice, vat: gross - netPrice }
     })
 
-  const saleLines = adopt(plan.sale.lines, vatAccounts.outputVat, -1)
-  const purchaseLines = adopt(plan.purchase.lines, vatAccounts.inputVat, 1)
+  const saleLines = adopt("sale", plan.sale.lines, vatAccounts.outputVat, -1)
+  const purchaseLines = adopt("purchase", plan.purchase.lines, vatAccounts.inputVat, 1)
   const gross = (lines: Plan["sale"]["lines"]) =>
     lines.reduce((s, l) => s + l.netPrice + (l.vat ?? 0), 0)
   return {

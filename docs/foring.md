@@ -60,9 +60,7 @@ Checkin sender regnskapsbilaget som PDF til Fiken-innboksen. Verktøyet henter P
 
    Verktøyet fører ikke på mva-kontoene selv. Fiken fører mva ut fra mva-typen på linjen, som i den manuelle oppskriften. 2701/2711 er Checkins kontoer i PDF-en.
 
-   Checkin runder mva per billett og gebyr, og kan derfor avvike noen øre fra 25 % av totalen. Fiken godtar ikke et eget mva-beløp: netto må være brutto / 1,25. For at Checkin-kontoen i Fiken skal stemme på øret, sendes bruttobeløpet Checkin faktisk har belastet (netto + Checkins mva), og netto regnes ut fra det. Øreavrundingen havner da mellom netto og mva, så lenge avviket er under 1 kr. Dette kan slås av med `"reconcile": { "useCheckinVat": false }`.
-
-   Mva-kontrollen feiler hvis avrundingen havner i Skatteetatens disfavør: mindre utgående mva enn billettene viser, eller mer inngående mva enn Checkin fakturerte. Det er noen øre; vurder om du vil føre likevel.
+   Netto og mva på en linje kan avvike noen øre fra bilaget, mens summen inkl. mva er lik. Se [Øreavrunding](#øreavrunding).
 3. **Sjekker mot Fiken:**
    - at bankkontoene finnes,
    - at vedlegget finnes,
@@ -99,9 +97,20 @@ Med `--amounts` finnes ingen utbetalingsoversikt, så da føres ingen fri poster
 
 Salget og kjøpet får referansen `Checkin YYYY-MM`. Verktøyet nekter å føre samme måned to ganger.
 
+### Føre deler av måneden
+
+Salg, kjøp og utbetalinger kan føres hver for seg. I web-appen fjerner du haken under «Dette føres» for det du vil føre senere. I CLI-en bruker du `--only`:
+
+```sh
+pnpm foring report --mode create --only salg,kjop      # utbetalingene føres senere
+pnpm foring report --mode create --only utbetalinger
+```
+
+Det som allerede ligger i Fiken, bokført eller som utkast, hoppes over og kan ikke velges. Slik retter du et feil bilag: annuller det i Fiken, åpne bilaget igjen og før bare det som mangler. Kontrollene regner med hele måneden, også det som føres senere.
+
 ## Kontrollere en ført måned
 
-Et bilag som allerede er ført kan åpnes igjen, også når salget eller kjøpet er ført for hånd. Da vises en kontroll i stedet for knappene for å føre, og ingenting skrives til Fiken.
+Et bilag der alt allerede er ført kan åpnes igjen, også når salget eller kjøpet er ført for hånd. Da vises en kontroll i stedet for knappene for å føre, og ingenting skrives til Fiken. Mangler noe, vises gjennomgangen med bare det som mangler valgt.
 
 Kontrollen finner månedens salg og kjøp i Fiken. Det er dem med referansen `Checkin YYYY-MM`, og alt som er datert i måneden og betalt til eller fra Checkin-kontoen, så også måneder som er ført for hånd kommer med. Deretter sjekkes:
 
@@ -173,6 +182,29 @@ Hvis Checkin er satt som kunde på salget og leverandør på kjøpet, havner fø
 - **Kjøp:** med leverandør blir det et leverandørkjøp (`kind: "supplier"`), betalt med en gang fra Checkin-kontoen.
 - **Finne riktig kontakt:** `pnpm foring contacts checkin` viser kontakt-ID, org.nr. og reskontrokontoer. Checkin AS har org.nr. 994 035 053. Noen gebyrer kommer fra CheckinPay AS (se side 3 i bilaget).
 - **Kontroll:** verktøyet sjekker at kontakten finnes og har riktig rolle, og stopper hvis ikke.
+
+## Øreavrunding
+
+Netto og mva i Fiken kan avvike noen øre fra Checkins bilag. Summen inkl. mva er alltid den samme, og det er den som går inn og ut av Checkin-kontoen.
+
+**Hvorfor.** Checkin regner mva på hver billett og hvert gebyr, runder hver til hele øre og summerer. Summen av mva blir da ikke nøyaktig 25 % av summen av netto. Fiken regner mva av linjen selv og godtar ikke et annet beløp: netto må være brutto / 1,25 (eller tilsvarende sats). Det finnes ingen kombinasjon som gir både Checkins netto og Checkins mva på én linje.
+
+**Hva vi gjør.** Vi fører bruttobeløpet Checkin faktisk har belastet (Checkins netto + Checkins mva) og lar Fiken regne netto og mva av det. Eksempel:
+
+| | Netto | Mva | Sum inkl. mva |
+|---|---:|---:|---:|
+| Checkin (bilaget) | 1 234,40 | 308,65 | 1 543,05 |
+| Fiken | 1 234,44 | 308,61 | 1 543,05 |
+
+Alternativet, å føre Checkins netto og la Fiken regne 25 %, gir riktig netto men feil sum, og da stemmer ikke Checkin-kontoen mot bilaget.
+
+**Hvor det vises.**
+- Gjennomgangen og CLI-en viser en kort «Øreavrunding»-linje: vår mva mot Checkins.
+- I Fiken får linjen teksten `Checkin gebyr (øreavrunding, mva hos Checkin 308,65 kr)`, så bilaget selv forklarer avviket mot vedlegget.
+
+**Grenser.** Det gjøres bare når avviket er under 1 kr og det er én linje med den mva-typen. Større avvik blir stående og fanges av kontrollene. Mva-kontrollen feiler hvis avrundingen havner i Skatteetatens disfavør: mindre utgående mva enn billettene viser, eller mer inngående mva enn Checkin fakturerte. Det er noen øre; vurder om du vil føre likevel.
+
+Slå av med `"reconcile": { "useCheckinVat": false }`. Da føres Checkins netto med 25 % mva, og Checkin-kontoen vil avvike med noen øre.
 
 ## Avstemming av Checkin-kontoen
 

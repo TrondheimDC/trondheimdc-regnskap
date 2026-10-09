@@ -1,8 +1,9 @@
 // The monthly flow, shared by the CLI and the web app:
 //   prepare()      read report -> recipe lines -> checks against the report itself (offline)
-//   inspectFiken() read-only checks against Fiken: accounts, attachment, duplicates, reconciliation
-//   book()         create drafts or the real sale + purchase + a fri postering per payout,
-//                  attach the PDF, accrue
+//   inspectFiken() read-only checks against Fiken: accounts, attachment, what is already there,
+//                  reconciliation
+//   book()         create drafts or the real sale + purchase + a fri postering per payout (the
+//                  parts chosen, never one already in Fiken), attach the PDF, accrue
 //   auditBooked()  for a month already booked: what is in Fiken against the report (read-only)
 // Nothing here prints or prompts; callers present the results and ask for confirmation.
 
@@ -34,8 +35,10 @@ import {
   type BookedLine,
   type Check,
   type FikenCheckinAccount,
+  type Rounding,
   reconcile,
   reconcileBooked,
+  roundingLineText,
   verifyBooked,
   verifyNet,
   verifyPayoutList,
@@ -44,6 +47,11 @@ import {
 } from "./verify.ts"
 
 export type Mode = "dry-run" | "draft" | "create"
+
+/** The three things a month consists of. Each can be booked on its own. */
+export const PARTS = ["sale", "purchase", "transfers"] as const
+export type Part = (typeof PARTS)[number]
+export type Parts = Record<Part, boolean>
 
 export interface ReportSource extends ParsedReport {
   /** The inbox document the numbers came from, if any. */
@@ -87,8 +95,8 @@ export interface Prepared {
   plan: Plan
   /** Fri posteringer moving each payout from the Checkin account to the bank. */
   transfers: Transfer[]
-  /** Descriptions of lines where Checkin's VAT replaced 25 % of net. */
-  adjusted: string[]
+  /** Lines where net and VAT are a few øre off Checkin's (same gross), see `Rounding`. */
+  adjusted: Rounding[]
   /** Checks against the report itself. */
   checks: Check[]
 }
@@ -137,13 +145,29 @@ export interface FikenState {
   /** Checkin as customer on the sale / supplier on the purchase, if configured. */
   customer?: ContactInfo
   supplier?: ContactInfo
-  /** Reasons booking is impossible (missing accounts, already booked). */
+  /** Reasons booking is impossible (missing accounts, nothing left to book). */
   blockers: string[]
+  /** Sale and purchase for the month already in Fiken. They are not booked again. */
+  existing: { sale?: Existing; purchase?: Existing }
   /** The payouts, with the ones already in Fiken marked `existing`. */
   transfers: Transfer[]
   checkin: FikenCheckinAccount
   /** Reconciliation of our Checkin account against the report. */
   checks: Check[]
+}
+
+/** A sale or purchase already in Fiken: booked (by us or by hand), or as a draft. */
+export type Existing =
+  | { status: "booked"; vouchers: BookedVoucher[] }
+  | { status: "draft"; draftId: number }
+
+/** What is left to book: a part already in Fiken, or with nothing in it, is not. */
+export function bookable(prepared: Prepared, fiken: FikenState): Parts {
+  return {
+    sale: !fiken.existing.sale,
+    purchase: prepared.plan.purchase.lines.length > 0 && !fiken.existing.purchase,
+    transfers: fiken.transfers.some((t) => !t.existing),
+  }
 }
 
 export function mappingRows(movements: Movements, config: Config): MappingRow[] {
@@ -252,7 +276,7 @@ export async function inspectFiken(
   client: Fiken,
   config: Config,
   prepared: Prepared,
-  options: { mode: Mode; attach: boolean },
+  options: { attach: boolean },
 ): Promise<FikenState> {
   const { month, plan, reference } = prepared
   const blockers: string[] = []
@@ -277,29 +301,26 @@ export async function inspectFiken(
       )
   }
 
-  if (options.mode === "draft") {
-    if ((await client.saleDrafts()).some((d) => d.invoiceNumber === reference)) {
-      blockers.push(
-        `Det ligger allerede et salgsutkast «${reference}» i Fiken. Slett eller bokfør det først.`,
-      )
-    }
-    if (
-      plan.purchase.lines.length > 0 &&
-      (await client.purchaseDrafts()).some((d) => d.invoiceNumber === reference)
-    ) {
-      blockers.push(
-        `Det ligger allerede et kjøpsutkast «${reference}» i Fiken. Slett eller bokfør det først.`,
-      )
-    }
+  // A part is in Fiken if it is booked or lies as a draft; either way it is not booked again.
+  const booked = await findBooked(client, config, prepared)
+  const saleDraft = (await client.saleDrafts()).find((d) => d.invoiceNumber === reference)
+  const purchaseDraft =
+    plan.purchase.lines.length > 0
+      ? (await client.purchaseDrafts()).find((d) => d.invoiceNumber === reference)
+      : undefined
+  const existingOf = (
+    vouchers: BookedVoucher[],
+    draft?: { draftId: number },
+  ): Existing | undefined =>
+    vouchers.length > 0
+      ? { status: "booked", vouchers }
+      : draft
+        ? { status: "draft", draftId: draft.draftId }
+        : undefined
+  const existing = {
+    sale: existingOf(booked.sales, saleDraft),
+    purchase: existingOf(booked.purchases, purchaseDraft),
   }
-  const existingSale = (await client.findSales(reference)).find((s) => !s.deleted)
-  if (existingSale)
-    blockers.push(`Salget «${reference}» er allerede bokført (id ${existingSale.saleId})`)
-  const existingPurchase = (await client.purchasesOn(plan.date)).find(
-    (p) => !p.deleted && p.identifier === reference,
-  )
-  if (existingPurchase)
-    blockers.push(`Kjøpet «${reference}» er allerede bokført (id ${existingPurchase.purchaseId})`)
 
   let customer: ContactInfo | undefined
   let supplier: ContactInfo | undefined
@@ -322,17 +343,26 @@ export async function inspectFiken(
     end: await client.accountBalance(config.checkinAccount, plan.date),
   }
   const newTransfers = transfers.filter((t) => !t.existing).reduce((s, t) => s + t.amount, 0)
+  const bookedGross = (e?: Existing) =>
+    e?.status === "booked" ? e.vouchers.reduce((s, v) => s + v.gross, 0) : undefined
 
-  return {
+  const state: FikenState = {
     company,
     doc,
     customer,
     supplier,
     blockers,
+    existing,
     transfers,
     checkin,
-    checks: reconcile(plan, prepared.source, checkin, config.reconcile, newTransfers),
+    checks: reconcile(plan, prepared.source, checkin, config.reconcile, newTransfers, {
+      sale: bookedGross(existing.sale),
+      purchase: bookedGross(existing.purchase),
+    }),
   }
+  if (!Object.values(bookable(prepared, state)).some(Boolean))
+    blockers.push(`Alt i bilaget for ${formatMonthNo(month)} ligger allerede i Fiken`)
+  return state
 }
 
 /** Days around Checkin's "Bokført" date in which the money may have been booked in Fiken. */
@@ -511,6 +541,14 @@ export async function auditBooked(
   }
 }
 
+/** The lines as sent to Fiken: a rounded line says so in its text, with Checkin's numbers. */
+function fikenLines(prepared: Prepared, side: Rounding["side"]): OrderLine[] {
+  return prepared.plan[side].lines.map((line) => {
+    const r = prepared.adjusted.find((a) => a.side === side && a.description === line.description)
+    return r ? { ...line, description: roundingLineText(r) } : line
+  })
+}
+
 function toDraft(
   plan: Plan,
   lines: OrderLine[],
@@ -544,9 +582,16 @@ export interface BookResult {
   balance?: { actual: number; expected: number }
 }
 
+const PART_NAMES: Record<Part, string> = {
+  sale: "salget",
+  purchase: "kjøpet",
+  transfers: "utbetalingene",
+}
+
 /**
- * Writes to Fiken. `onStep` is called after each completed step, so a failure halfway can be
- * reported precisely. Callers must have shown the plan and checks and gotten confirmation.
+ * Writes the chosen parts to Fiken. `onStep` is called after each completed step, so a failure
+ * halfway can be reported precisely. Callers must have shown the plan and checks and gotten
+ * confirmation. A part already in Fiken is refused, so a month is never booked twice.
  */
 export async function book(
   client: Fiken,
@@ -554,9 +599,15 @@ export async function book(
   prepared: Prepared,
   fiken: FikenState,
   mode: Exclude<Mode, "dry-run">,
+  parts: Parts,
   onStep: (step: string) => void = () => {},
 ): Promise<BookResult> {
   if (fiken.blockers.length > 0) throw new Error(`Kan ikke føre: ${fiken.blockers.join("; ")}`)
+  const open = bookable(prepared, fiken)
+  for (const part of PARTS)
+    if (parts[part] && !open[part])
+      throw new Error(`Kan ikke føre ${PART_NAMES[part]}: ligger allerede i Fiken eller er tomt`)
+  if (!PARTS.some((part) => parts[part])) throw new Error("Ingenting er valgt å føre")
   const { plan, reference } = prepared
   const doc = fiken.doc
   const steps: string[] = []
@@ -566,26 +617,28 @@ export async function book(
   }
 
   if (mode === "draft") {
-    const saleDraftId = await client.createSaleDraft(
-      toDraft(
-        plan,
-        plan.sale.lines,
-        plan.sale.gross,
-        reference,
-        config.checkinAccount,
-        fiken.customer?.contactId,
-      ),
-    )
-    step(`Salgsutkast laget (id ${saleDraftId})`)
-    if (doc) {
-      await client.attachInboxDocument({ kind: "saleDraft", id: saleDraftId }, doc.documentId)
-      step("Bilaget lagt ved salgsutkastet")
+    if (parts.sale) {
+      const saleDraftId = await client.createSaleDraft(
+        toDraft(
+          plan,
+          fikenLines(prepared, "sale"),
+          plan.sale.gross,
+          reference,
+          config.checkinAccount,
+          fiken.customer?.contactId,
+        ),
+      )
+      step(`Salgsutkast laget (id ${saleDraftId})`)
+      if (doc) {
+        await client.attachInboxDocument({ kind: "saleDraft", id: saleDraftId }, doc.documentId)
+        step("Bilaget lagt ved salgsutkastet")
+      }
     }
-    if (plan.purchase.lines.length > 0) {
+    if (parts.purchase) {
       const purchaseDraftId = await client.createPurchaseDraft(
         toDraft(
           plan,
-          plan.purchase.lines,
+          fikenLines(prepared, "purchase"),
           plan.purchase.gross,
           reference,
           config.checkinAccount,
@@ -602,36 +655,38 @@ export async function book(
       }
     }
     // Fiken has no drafts for fri posteringer; open entries can be deleted without a counter-entry.
-    await bookTransfers(client, config, fiken, step, { open: true })
+    if (parts.transfers) await bookTransfers(client, config, fiken, step, { open: true })
     return { steps }
   }
 
-  const saleId = await client.createSale({
-    saleNumber: reference,
-    date: plan.date,
-    kind: "cash_sale",
-    currency: "NOK",
-    lines: plan.sale.lines,
-    totalPaid: plan.sale.gross,
-    paymentAccount: config.checkinAccount,
-    paymentDate: plan.date,
-    customerId: fiken.customer?.contactId,
-  })
-  step(`Salg bokført (id ${saleId})`)
-  if (doc) {
-    await client.attachInboxDocument({ kind: "sale", id: saleId }, doc.documentId)
-    step("Bilaget lagt ved salget")
-  }
-  const saleAccrual = config.sale.accrual
-  if (saleAccrual) {
-    for (const line of (await client.getSale(saleId)).lines) {
-      if (line.lineId === undefined || line.account !== config.sale.account) continue
-      await client.accrueSaleLine(saleId, { lineId: line.lineId, ...saleAccrual })
-      step(`Periodisert "${line.description}" mot ${saleAccrual.account}`)
+  if (parts.sale) {
+    const saleId = await client.createSale({
+      saleNumber: reference,
+      date: plan.date,
+      kind: "cash_sale",
+      currency: "NOK",
+      lines: fikenLines(prepared, "sale"),
+      totalPaid: plan.sale.gross,
+      paymentAccount: config.checkinAccount,
+      paymentDate: plan.date,
+      customerId: fiken.customer?.contactId,
+    })
+    step(`Salg bokført (id ${saleId})`)
+    if (doc) {
+      await client.attachInboxDocument({ kind: "sale", id: saleId }, doc.documentId)
+      step("Bilaget lagt ved salget")
+    }
+    const saleAccrual = config.sale.accrual
+    if (saleAccrual) {
+      for (const line of (await client.getSale(saleId)).lines) {
+        if (line.lineId === undefined || line.account !== config.sale.account) continue
+        await client.accrueSaleLine(saleId, { lineId: line.lineId, ...saleAccrual })
+        step(`Periodisert "${line.description}" mot ${saleAccrual.account}`)
+      }
     }
   }
 
-  if (plan.purchase.lines.length > 0) {
+  if (parts.purchase) {
     const purchaseId = await client.createPurchase({
       identifier: reference,
       date: plan.date,
@@ -639,7 +694,7 @@ export async function book(
       kind: fiken.supplier ? "supplier" : "cash_purchase",
       paid: true,
       currency: "NOK",
-      lines: plan.purchase.lines,
+      lines: fikenLines(prepared, "purchase"),
       paymentAccount: config.checkinAccount,
       paymentDate: plan.date,
       supplierId: fiken.supplier?.contactId,
@@ -659,13 +714,19 @@ export async function book(
     }
   }
 
-  const moved = await bookTransfers(client, config, fiken, step, { open: false })
+  const moved = parts.transfers
+    ? await bookTransfers(client, config, fiken, step, { open: false })
+    : 0
 
   return {
     steps,
     balance: {
       actual: await client.accountBalance(config.checkinAccount, plan.date),
-      expected: fiken.checkin.end + plan.sale.gross - plan.purchase.gross - moved,
+      expected:
+        fiken.checkin.end +
+        (parts.sale ? plan.sale.gross : 0) -
+        (parts.purchase ? plan.purchase.gross : 0) -
+        moved,
     },
   }
 }
