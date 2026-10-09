@@ -1,8 +1,8 @@
-# Automatic checks are off until we are ready to deploy. Restore the pull_request trigger to turn them on.
 name: PR - Check
 
 on:
-  workflow_dispatch:
+  pull_request:
+    branches: ["main"]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

@@ -1,7 +1,10 @@
-# Automatic deploy is off until we are ready. Restore the push trigger to turn it on.
 name: CD - Build & Deploy
 
 on:
+  push:
+    branches: ["main"]
+
+  # Allows manual trigger from Actions tab
   workflow_dispatch:
 
 concurrency:
