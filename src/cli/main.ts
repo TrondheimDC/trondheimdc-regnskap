@@ -7,9 +7,11 @@ import { createInterface } from "node:readline/promises"
 import { parseArgs } from "node:util"
 import { z } from "zod"
 import {
+  auditBooked,
   book,
   findReportDocument,
   inspectFiken,
+  listReportDocuments,
   type MappingRow,
   prepare,
   type ReportSource,
@@ -17,7 +19,7 @@ import {
 } from "../lib/booking.ts"
 import { parseAmountsArg, parseReportPdf } from "../lib/checkin.ts"
 import { type Config, Month, parseConfig } from "../lib/config.ts"
-import { Fiken, type InboxDocument, type OrderLine } from "../lib/fiken.ts"
+import { Fiken, type InboxDocument } from "../lib/fiken.ts"
 import { formatMonthNo, formatNok } from "../lib/plan.ts"
 import type { Check } from "../lib/verify.ts"
 import { createAuth, hasCredentials, login, logout } from "./auth.ts"
@@ -28,6 +30,9 @@ Commands:
   report [file.pdf]   Book a monthly Checkin regnskapsbilag as a sale, a purchase and
                       a fri postering (Checkin account -> bank) per payout.
                       Without a file the PDF is fetched from the Fiken inbox.
+  check [file.pdf]    Check a month that is already booked against its regnskapsbilag:
+                      sale, purchase and payouts in Fiken. Never writes.
+                      Without a file, give --month or --inbox-doc (used documents too).
   companies           List Fiken companies the token can access
   accounts            List bank accounts in Fiken (to find account codes)
   inbox               List unused documents in the Fiken inbox
@@ -102,11 +107,21 @@ function warn(message: string) {
   console.log(`  ✗ ${message}`)
 }
 
-function printLines(title: string, lines: OrderLine[], gross: number) {
+function printLines(
+  title: string,
+  lines: {
+    account: string
+    description?: string
+    netPrice: number
+    vat?: number
+    vatType: string
+  }[],
+  gross: number,
+) {
   console.log(`\n${title}`)
   for (const l of lines) {
     console.log(
-      `  ${l.account}  ${l.description.padEnd(24)} netto ${formatNok(l.netPrice).padStart(16)}  ` +
+      `  ${l.account}  ${(l.description ?? "").padEnd(24)} netto ${formatNok(l.netPrice).padStart(16)}  ` +
         `mva ${formatNok(l.vat ?? 0).padStart(14)}  (${l.vatType})`,
     )
   }
@@ -335,6 +350,68 @@ async function report() {
   console.log("\nFerdig.")
 }
 
+/** Checks a booked month: what is in Fiken against the report. Read-only. */
+async function check() {
+  const config = await loadConfig(opts.config)
+  const client = await fiken(config)
+
+  let source: ReportSource
+  if (args[0] || opts["inbox-doc"]) {
+    source = await readSource(client, config)
+  } else {
+    if (!opts.month) fail("Give --month <YYYY-MM>, --inbox-doc <id> or a PDF file")
+    const docs = (await listReportDocuments(client, config.inbox.reportName)).filter(
+      (d) => d.month === opts.month,
+    )
+    const doc = docs[0]
+    if (!doc || docs.length > 1)
+      fail(
+        docs.length === 0
+          ? `No "${config.inbox.reportName}" document for ${opts.month} in the inbox`
+          : `Several documents for ${opts.month}, pick one with --inbox-doc <id>:\n${docs.map((d) => `  ${d.documentId}  ${d.name}`).join("\n")}`,
+      )
+    const parsed = await parseReportPdf(await client.downloadInboxDocument(doc))
+    source = { ...parsed, doc, description: `Fiken-innboks ${doc.documentId} "${doc.name}"` }
+  }
+  const prepared = prepare(source, config, opts.month ?? source.month)
+  const { plan, month } = prepared
+
+  console.log(`Kontroll av ført måned ${formatMonthNo(month)} i Fiken`)
+  console.log(`Kilde: ${source.description}`)
+  printLines("Salg ifølge bilaget", plan.sale.lines, plan.sale.gross)
+  if (plan.purchase.lines.length > 0)
+    printLines("Kjøp ifølge bilaget", plan.purchase.lines, plan.purchase.gross)
+
+  const audit = await auditBooked(client, config, prepared)
+  for (const [title, vouchers] of [
+    ["Salg", audit.booked.sales],
+    ["Kjøp", audit.booked.purchases],
+  ] as const) {
+    if (vouchers.length === 0) console.log(`\n${title} i Fiken: fant ingen`)
+    for (const v of vouchers)
+      printLines(
+        `${title} i Fiken: "${v.number ?? ""}" ${v.date ?? ""} (id ${v.id})`,
+        v.lines,
+        v.gross,
+      )
+  }
+
+  console.log(`\nFri posteringer (${config.checkinAccount} → ${config.bankAccount})`)
+  if (audit.transfers.length === 0) console.log("  (ingen utbetalinger i rapporten)")
+  for (const t of audit.transfers) {
+    const line = `${t.date}  ${formatNok(t.amount).padStart(16)}  bilag ${t.voucher}`
+    if (t.existing) step(`${line}  ført (id ${t.existing.journalEntryId})`)
+    else warn(`${line}  mangler i Fiken`)
+  }
+
+  console.log(
+    `\nKontroller (${config.checkinAccount}: ${formatNok(audit.checkin.start)} → ${formatNok(audit.checkin.end)} i Fiken)`,
+  )
+  const ok = printChecks([...prepared.checks, ...audit.checks])
+  console.log(ok ? "\nAlt stemmer." : "\nNoe avviker, se ✗ over. Rett det i Fiken.")
+  if (!ok) process.exitCode = 1
+}
+
 async function main() {
   if (opts.help || !command || command === "help") {
     console.log(HELP)
@@ -343,6 +420,8 @@ async function main() {
   switch (command) {
     case "report":
       return report()
+    case "check":
+      return check()
     case "login":
       return login()
     case "logout":

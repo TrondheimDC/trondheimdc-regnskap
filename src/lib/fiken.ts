@@ -103,23 +103,38 @@ export interface GeneralJournalEntryRequest {
 
 const ResultLine = z.object({
   lineId: z.number().optional(),
-  description: z.string().optional(),
-  account: z.string().optional(),
+  description: z.string().nullish(),
+  account: z.string().nullish(),
+  netPrice: z.number().nullish(),
+  vat: z.number().nullish(),
+  /** Fiken has more VAT types than we book with, so any string is accepted when reading. */
+  vatType: z.string().nullish(),
 })
+export type ResultLine = z.infer<typeof ResultLine>
+
+const PaymentResult = z.object({ account: z.string().nullish(), amount: z.number().nullish() })
 
 const SaleResult = z.object({
   saleId: z.number(),
-  saleNumber: z.string().optional(),
+  saleNumber: z.string().nullish(),
+  date: z.string().nullish(),
   lines: z.array(ResultLine),
+  paymentAccount: z.string().nullish(),
+  salePayments: z.array(PaymentResult).nullish(),
   deleted: z.boolean().optional(),
 })
+export type SaleResult = z.infer<typeof SaleResult>
 
 const PurchaseResult = z.object({
   purchaseId: z.number(),
-  identifier: z.string().optional(),
+  identifier: z.string().nullish(),
+  date: z.string().nullish(),
   lines: z.array(ResultLine),
+  paymentAccount: z.string().nullish(),
+  payments: z.array(PaymentResult).nullish(),
   deleted: z.boolean().optional(),
 })
+export type PurchaseResult = z.infer<typeof PurchaseResult>
 
 const DraftResult = z.object({
   draftId: z.number(),
@@ -348,6 +363,11 @@ export class Fiken {
     return this.get(z.array(SaleResult), this.company("/sales"), { saleNumber, pageSize: 100 })
   }
 
+  /** All sales dated within [from, to]. */
+  salesBetween(from: string, to: string) {
+    return this.getAll(SaleResult, this.company("/sales"), { dateGe: from, dateLe: to })
+  }
+
   createPurchase(purchase: PurchaseRequest) {
     return this.create(this.company("/purchases"), purchase)
   }
@@ -358,6 +378,11 @@ export class Fiken {
 
   purchasesOn(date: string) {
     return this.get(z.array(PurchaseResult), this.company("/purchases"), { date, pageSize: 100 })
+  }
+
+  /** All purchases dated within [from, to]. */
+  purchasesBetween(from: string, to: string) {
+    return this.getAll(PurchaseResult, this.company("/purchases"), { dateGe: from, dateLe: to })
   }
 
   createSaleDraft(draft: DraftRequest) {

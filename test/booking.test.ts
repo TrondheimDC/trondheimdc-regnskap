@@ -4,8 +4,10 @@
 import { readFile } from "node:fs/promises"
 import { describe, expect, test } from "vitest"
 import {
+  auditBooked,
   book,
   type FikenState,
+  findBooked,
   findReportDocument,
   inspectFiken,
   type Prepared,
@@ -20,7 +22,9 @@ import type {
   InboxDocument,
   JournalEntry,
   PurchaseRequest,
+  PurchaseResult,
   SaleRequest,
+  SaleResult,
 } from "../src/lib/fiken.ts"
 import { reconcile } from "../src/lib/verify.ts"
 import { MARCH_2026 } from "./pdf-fixture.ts"
@@ -55,7 +59,9 @@ type Client = Pick<
   | "saleDrafts"
   | "purchaseDrafts"
   | "findSales"
+  | "salesBetween"
   | "purchasesOn"
+  | "purchasesBetween"
   | "getContact"
   | "contacts"
   | "journalEntriesBetween"
@@ -77,7 +83,8 @@ class FakeFiken implements Client {
   /** Movements on the Checkin account (positive = into the account). */
   ledger: { date: string; amount: number }[] = [{ date: "2026-02-01", amount: FEB_BALANCE }]
   journalEntries: JournalEntry[] = []
-  sales: { saleId: number; saleNumber: string; lines: []; deleted?: boolean }[] = []
+  sales: SaleResult[] = []
+  purchases: PurchaseResult[] = []
   /** Every write, in order. */
   writes: { kind: string; id?: number; body?: unknown }[] = []
   journalQueries: [string, string][] = []
@@ -121,8 +128,14 @@ class FakeFiken implements Client {
   async findSales(saleNumber: string) {
     return this.sales.filter((s) => s.saleNumber === saleNumber)
   }
-  async purchasesOn() {
-    return []
+  async salesBetween(from: string, to: string) {
+    return this.sales.filter((s) => s.date && s.date >= from && s.date <= to)
+  }
+  async purchasesOn(date: string) {
+    return this.purchases.filter((p) => p.date === date)
+  }
+  async purchasesBetween(from: string, to: string) {
+    return this.purchases.filter((p) => p.date && p.date >= from && p.date <= to)
   }
   async getContact(contactId: number) {
     return { contactId, name: "Checkin AS", customer: true, supplier: true, inactive: false }
@@ -151,7 +164,9 @@ class FakeFiken implements Client {
   }
   async createSale(sale: SaleRequest) {
     this.ledger.push({ date: sale.paymentDate ?? sale.date, amount: sale.totalPaid ?? 0 })
-    return this.created("sale", sale)
+    const saleId = this.created("sale", sale)
+    this.sales.push({ ...sale, saleId })
+    return saleId
   }
   async getSale(saleId: number) {
     return { saleId, lines: [] }
@@ -159,7 +174,9 @@ class FakeFiken implements Client {
   async createPurchase(purchase: PurchaseRequest) {
     const gross = purchase.lines.reduce((s, l) => s + l.netPrice + (l.vat ?? 0), 0)
     this.ledger.push({ date: purchase.paymentDate ?? purchase.date, amount: -gross })
-    return this.created("purchase", purchase)
+    const purchaseId = this.created("purchase", purchase)
+    this.purchases.push({ ...purchase, purchaseId })
+    return purchaseId
   }
   async getPurchase(purchaseId: number) {
     return { purchaseId, lines: [] }
@@ -177,7 +194,18 @@ class FakeFiken implements Client {
           this.ledger.push({ date: je.date, amount: -line.amount })
         if (line.debitAccount === CHECKIN) this.ledger.push({ date: je.date, amount: line.amount })
       }
-    return this.created("journalEntry", entry)
+    const id = this.created("journalEntry", entry)
+    for (const je of entry.journalEntries)
+      this.journalEntries.push({
+        journalEntryId: id,
+        description: je.description,
+        date: je.date,
+        lines: je.lines.flatMap((l) => [
+          { account: l.debitAccount, amount: l.amount },
+          { account: l.creditAccount, amount: -l.amount },
+        ]),
+      })
+    return id
   }
   async attachInboxDocument(target: { kind: string; id: number }, inboxDocumentId: number) {
     expect(inboxDocumentId).toBe(DOC.documentId)
@@ -509,6 +537,74 @@ describe("book", () => {
     for (const t of p.transfers) fake.addTransfer(t.date, t.amount, { description: t.description })
     const state = await inspect(fake, p, "create")
     expect(state.transfers.every((t) => t.existing)).toBe(true)
+  })
+})
+
+describe("auditBooked", () => {
+  async function booked(fake: FakeFiken) {
+    const p = await prepared()
+    const state = await inspectFiken(fake.client, config, p, { mode: "create", attach: true })
+    await book(fake.client, config, p, state, "create")
+    return p
+  }
+
+  test("a month booked by the tool: everything matches", async () => {
+    const fake = new FakeFiken()
+    const p = await booked(fake)
+    const writes = fake.writes.length
+    const audit = await auditBooked(fake.client, config, p)
+    expect(audit.booked.sales.map((s) => [s.number, s.gross])).toEqual([
+      ["Checkin 2026-03", SALE_GROSS],
+    ])
+    expect(audit.booked.purchases.map((s) => [s.number, s.gross])).toEqual([
+      ["Checkin 2026-03", PURCHASE_GROSS],
+    ])
+    expect(audit.transfers.every((t) => t.existing)).toBe(true)
+    expect(audit.checks.filter((c) => !c.ok)).toEqual([])
+    expect(fake.writes).toHaveLength(writes)
+  })
+
+  test("a month booked by hand is found by the payment to the Checkin account", async () => {
+    const fake = new FakeFiken()
+    const p = await booked(fake)
+    fake.sales[0]!.saleNumber = "Billetter mars"
+    fake.purchases[0]!.identifier = "Gebyr mars"
+    const audit = await auditBooked(fake.client, config, p)
+    expect(audit.booked.sales.map((s) => s.number)).toEqual(["Billetter mars"])
+    expect(audit.booked.purchases.map((s) => s.number)).toEqual(["Gebyr mars"])
+    expect(audit.checks.filter((c) => !c.ok)).toEqual([])
+  })
+
+  test("flags a sale booked twice, a missing purchase and a missing payout", async () => {
+    const fake = new FakeFiken()
+    const p = await booked(fake)
+    fake.sales.push({ ...fake.sales[0]!, saleId: 999 })
+    fake.purchases[0]!.deleted = true
+    fake.journalEntries.pop()
+    const audit = await auditBooked(fake.client, config, p)
+    const failed = audit.checks.filter((c) => !c.ok).map((c) => c.label)
+    expect(failed).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^Salg 3000, 25 % mva: netto/),
+        expect.stringMatching(/^Kjøp 4300, 25 % mva: netto/),
+        expect.stringMatching(/^Utbetaling 2026-03-22 \(bilag 17342:14\)/),
+      ]),
+    )
+    const sale = audit.checks.find((c) => c.label.startsWith("Salg 3000, 25 % mva: netto"))!
+    expect(sale.expected).toBe(2 * sale.actual)
+  })
+
+  test("findBooked ignores sales in the month paid to other accounts", async () => {
+    const fake = new FakeFiken()
+    fake.sales.push({
+      saleId: 1,
+      saleNumber: "Sponsor",
+      date: "2026-03-15",
+      lines: [{ account: "3000", netPrice: 100000, vat: 25000, vatType: "HIGH" }],
+      paymentAccount: BANK,
+    })
+    const found = await findBooked(fake.client, config, await prepared())
+    expect(found).toEqual({ sales: [], purchases: [] })
   })
 })
 

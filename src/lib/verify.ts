@@ -62,6 +62,12 @@ export interface FikenCheckinAccount {
   end: number
 }
 
+/** Sum over the accounts, or undefined if none of them are in the report. */
+const sumAccounts = (accounts: string[], from: Movements) =>
+  accounts.some((a) => from.has(a))
+    ? accounts.reduce((s, a) => s + (from.get(a) ?? 0), 0)
+    : undefined
+
 /**
  * Reconciles our Checkin account in Fiken (e.g. 1960:10001) against the report, counting what
  * this run will book (`newTransfers`: payouts not yet moved to the bank in Fiken):
@@ -77,12 +83,7 @@ export function reconcile(
   newTransfers = 0,
 ): Check[] {
   const checks: Check[] = []
-  const sum = (accounts: string[], from: Movements) =>
-    accounts.some((a) => from.has(a))
-      ? accounts.reduce((s, a) => s + (from.get(a) ?? 0), 0)
-      : undefined
-
-  const paidOut = sum(config.payoutAccounts, report.balance)
+  const paidOut = sumAccounts(config.payoutAccounts, report.balance)
   if (paidOut !== undefined) {
     const movedOut = fiken.start - fiken.end + newTransfers
     checks.push({
@@ -96,7 +97,7 @@ export function reconcile(
   }
 
   if (config.balanceAccounts) {
-    const held = sum(config.balanceAccounts, report.closing)
+    const held = sumAccounts(config.balanceAccounts, report.closing)
     if (held !== undefined) {
       const after = fiken.end + plan.sale.gross - plan.purchase.gross - newTransfers
       checks.push({
@@ -194,4 +195,134 @@ export function applyCheckinVat(
     },
     adjusted,
   }
+}
+
+/** A line of a sale or purchase as booked in Fiken. */
+export interface BookedLine {
+  account: string
+  vatType: string
+  netPrice: number
+  vat: number
+}
+
+const VAT_LABELS: Record<string, string> = {
+  HIGH: "25 % mva",
+  MEDIUM: "15 % mva",
+  LOW: "12 % mva",
+  NONE: "uten mva",
+}
+
+function byAccountAndVat(
+  lines: { account: string; vatType: string; netPrice: number; vat?: number }[],
+) {
+  const groups = new Map<string, { account: string; vatType: string; net: number; vat: number }>()
+  for (const l of lines) {
+    const key = `${l.account} ${l.vatType}`
+    const g = groups.get(key) ?? { account: l.account, vatType: l.vatType, net: 0, vat: 0 }
+    g.net += l.netPrice
+    g.vat += l.vat ?? 0
+    groups.set(key, g)
+  }
+  return groups
+}
+
+/**
+ * For a month that is already booked: the sale and purchase lines in Fiken, summed per account
+ * and VAT type, must match what the report gives. A missing, doubled or mis-keyed line shows up
+ * as a difference. VAT may drift by rounding when Fiken computed it.
+ */
+export function verifyBooked(
+  plan: Plan,
+  booked: { sale: BookedLine[]; purchase: BookedLine[] },
+): Check[] {
+  const checks: Check[] = []
+  for (const side of ["sale", "purchase"] as const) {
+    const name = side === "sale" ? "Salg" : "Kjøp"
+    const want = byAccountAndVat(plan[side].lines)
+    const have = byAccountAndVat(booked[side])
+    for (const key of new Set([...want.keys(), ...have.keys()])) {
+      const w = want.get(key)
+      const h = have.get(key)
+      const { account, vatType } = (w ?? h)!
+      const label = `${name} ${account}, ${VAT_LABELS[vatType] ?? vatType}`
+      const hint = !h
+        ? `Fant ikke linjen i Fiken. Sjekk at ${name.toLowerCase()}et er ført, på riktig konto og med riktig mva.`
+        : !w
+          ? "Linjen finnes ikke i bilaget. Sjekk konto og mva på føringen i Fiken."
+          : `Beløpet avviker. Sjekk om ${name.toLowerCase()}et er ført to ganger eller med feil beløp.`
+      checks.push({
+        label: `${label}: netto i Fiken mot bilaget`,
+        expected: h?.net ?? 0,
+        actual: w?.net ?? 0,
+        ok: (h?.net ?? 0) === (w?.net ?? 0),
+        source: "Fiken",
+        hint,
+      })
+      if (w?.vat || h?.vat) {
+        checks.push({
+          label: `${label}: mva i Fiken mot bilaget`,
+          expected: h?.vat ?? 0,
+          actual: w?.vat ?? 0,
+          ok: Math.abs((h?.vat ?? 0) - (w?.vat ?? 0)) <= TOLERANCE_ORE,
+          source: "Fiken",
+          hint,
+        })
+      }
+    }
+  }
+  return checks
+}
+
+/** For a booked month: every payout in the report must be moved to the bank in Fiken. */
+export function verifyTransfersBooked(
+  transfers: { voucher: string; date: string; amount: number; existing?: unknown }[],
+): Check[] {
+  return transfers.map((t) => ({
+    label: `Utbetaling ${t.date} (bilag ${t.voucher}) ført i Fiken`,
+    expected: t.existing ? t.amount : 0,
+    actual: t.amount,
+    ok: t.existing !== undefined,
+    source: "Fiken",
+    hint: "Fant ingen postering på Checkin-kontoen med dette beløpet nær datoen.",
+  }))
+}
+
+/**
+ * Reconciles the Checkin account for a month that is already booked. `booked` is the sale and
+ * purchase found in Fiken; they are in the month's movement, so they are taken out to get what
+ * was moved to the bank.
+ */
+export function reconcileBooked(
+  booked: { sale: number; purchase: number },
+  report: { closing: Movements; balance: Movements },
+  fiken: FikenCheckinAccount,
+  config: { payoutAccounts: string[]; balanceAccounts?: string[] },
+): Check[] {
+  const checks: Check[] = []
+  const paidOut = sumAccounts(config.payoutAccounts, report.balance)
+  if (paidOut !== undefined) {
+    const movedOut = fiken.start - fiken.end + booked.sale - booked.purchase
+    checks.push({
+      label: `Utbetalt til bank: Checkin ${config.payoutAccounts.join("+")} mot overført fra ${fiken.code} i Fiken`,
+      expected: movedOut,
+      actual: paidOut,
+      ok: movedOut === paidOut,
+      source: "Fiken",
+      hint: "En utbetaling mangler, er ført to ganger, med feil beløp, eller datert i en annen måned.",
+    })
+  }
+  if (config.balanceAccounts) {
+    const held = sumAccounts(config.balanceAccounts, report.closing)
+    if (held !== undefined) {
+      checks.push({
+        label: `Saldo: ${fiken.code} i Fiken mot Checkin ${config.balanceAccounts.join("+")}`,
+        expected: fiken.end,
+        actual: held,
+        ok: Math.abs(fiken.end - held) <= TOLERANCE_ORE,
+        source: "Fiken",
+        hint: "Saldoen i Fiken stemmer ikke med det Checkin holder. Avviket kan også stamme fra en tidligere måned.",
+      })
+    }
+  }
+  return checks
 }

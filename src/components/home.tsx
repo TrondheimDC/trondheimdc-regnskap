@@ -262,7 +262,8 @@ function Picker({ client, onPick }: { client?: Fiken; onPick: (s: Selection) => 
 
         {inbox.data && docs.length > 0 && unused === 0 ? (
           <p className="text-sm text-[var(--color-fg-base)]/60">
-            Ingen nye bilag – alle er brukt i Fiken. Neste kommer i starten av måneden.
+            Ingen nye bilag – alle er brukt i Fiken. Neste kommer i starten av måneden. Åpne et
+            brukt bilag for å kontrollere føringen.
           </p>
         ) : null}
 
@@ -361,7 +362,10 @@ function ReportCard({ doc, onPick }: { doc: ReportDocument; onPick: () => void }
       </span>
       <span className="flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-sm font-normal">
         <span className="opacity-60">Mottatt {formatDay(doc.createdAt)}</span>
-        <ChevronRight className="size-5 shrink-0 opacity-50" aria-hidden />
+        <span className="flex items-center gap-1 opacity-60">
+          {doc.used ? "Kontroller" : null}
+          <ChevronRight className="size-5 shrink-0" aria-hidden />
+        </span>
       </span>
     </Button>
   )

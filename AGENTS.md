@@ -77,6 +77,6 @@ Playwright is not a dependency here; point at any install. `CHROMIUM_PATH` overr
 ```sh
 mise run check     # biome, tsc, vitest — run before you're done
 pnpm dev           # http://localhost:3000 (proxies /api/fiken)
-pnpm foring        # CLI: login | report | payout | inbox | contacts
+pnpm foring        # CLI: login | report | check | inbox | contacts
 mise run build     # static export to out/
 ```

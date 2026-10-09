@@ -13,6 +13,7 @@ import {
   ListChecks,
   OctagonX,
   ReceiptText,
+  RefreshCw,
 } from "lucide-react"
 import { type ReactNode, useMemo, useState } from "react"
 import { toast } from "sonner"
@@ -44,9 +45,13 @@ import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import { config } from "@/lib/app-config"
 import {
+  type Audit,
+  auditBooked,
+  type BookedVoucher,
   type BookResult,
   book,
   type FikenState,
+  findBooked,
   inspectFiken,
   type Prepared,
   prepare,
@@ -81,18 +86,31 @@ async function analyze(client: Fiken, selection: Selection) {
 
   const prepared = prepare(source, config)
   const summaryPage = Math.min(...Object.values(source.boxes).map((b) => b.page))
-  const [fiken, preview] = await Promise.all([
-    // Draft mode also blocks on existing drafts, so a month can't end up both drafted and booked.
-    inspectFiken(client, config, prepared, { mode: "draft", attach: true }),
+  const [state, preview] = await Promise.all([
+    inspect(client, prepared, selection.kind === "inbox" && selection.doc.used),
     // The page is only an aid for checking; the review works without it.
     Number.isFinite(summaryPage)
       ? renderPdfPage(pdf, summaryPage).catch(() => undefined)
       : Promise.resolve(undefined),
   ])
-  return { prepared, fiken, pdf, preview }
+  return { prepared, ...state, pdf, preview }
 }
 
-type Analysis = Awaited<ReturnType<typeof analyze>>
+/** A used bilag, or a month with anything booked already, is checked against Fiken instead of booked. */
+async function inspect(
+  client: Fiken,
+  prepared: Prepared,
+  used: boolean,
+): Promise<{ audit: Audit; fiken?: undefined } | { fiken: FikenState; audit?: undefined }> {
+  const booked = await findBooked(client, config, prepared)
+  if (used || booked.sales.length > 0 || booked.purchases.length > 0)
+    return { audit: await auditBooked(client, config, prepared, booked) }
+  // Draft mode also blocks on existing drafts, so a month can't end up both drafted and booked.
+  return { fiken: await inspectFiken(client, config, prepared, { mode: "draft", attach: true }) }
+}
+
+type Analysis = Awaited<ReturnType<typeof analyze>> & { fiken: FikenState }
+type AuditAnalysis = Awaited<ReturnType<typeof analyze>> & { audit: Audit }
 
 function SectionLabel({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
   return (
@@ -163,15 +181,19 @@ export function ReviewScreen({
   const [progress, setProgress] = useState<string[]>([])
   const booking = useMutation({
     mutationFn: (mode: BookMode) => {
-      if (!analysis.data) throw new Error("Bilaget er ikke lest ennå")
+      const { prepared, fiken } = analysis.data ?? {}
+      if (!prepared || !fiken) throw new Error("Bilaget er ikke lest ennå")
       setProgress([])
-      const { prepared, fiken } = analysis.data
       return book(client, config, prepared, fiken, mode, (step) => setProgress((p) => [...p, step]))
     },
     onSuccess: (_, mode) =>
       toast.success(mode === "draft" ? "Utkast laget i Fiken" : "Ført i Fiken"),
     onError: () => toast.error("Føringen stoppet"),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["inbox"] }),
+    onSettled: async () => {
+      // Opening the bilag again should show what was booked, not the plan from before.
+      await queryClient.invalidateQueries({ queryKey: ["analysis"], refetchType: "none" })
+      await queryClient.invalidateQueries({ queryKey: ["inbox"] })
+    },
   })
 
   const month =
@@ -179,18 +201,44 @@ export function ReviewScreen({
   const title = month ? formatMonth(month) : "Regnskapsbilag"
   const docName = selection.kind === "inbox" ? selection.doc.name : selection.file.name
   const bookingStarted = !booking.isIdle && booking.variables !== undefined
+  // After fixing something in Fiken: read Fiken (and the bilag) again. The old numbers stay
+  // on screen until the new ones are in.
+  const refresh = () =>
+    analysis.refetch().then((r) => {
+      if (r.isSuccess) toast.success("Oppdatert fra Fiken")
+    })
 
   return (
     <main className="attendee-reveal mx-auto flex min-h-dvh w-full max-w-7xl flex-col gap-6 p-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:p-6 lg:px-8">
       <header className="shrink-0 pt-2">
         <div className="flex items-center justify-between">
           <TdcLogo />
-          <Button variant="ghost" size="sm" onClick={onBack} disabled={booking.isPending}>
-            <ArrowLeft className="size-4" aria-hidden />
-            Tilbake
-          </Button>
+          <div className="flex items-center gap-1">
+            {bookingStarted ? null : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={refresh}
+                disabled={analysis.isFetching}
+                className="text-[var(--color-fg-base)]/70"
+              >
+                <RefreshCw
+                  className={cn("size-4", analysis.isFetching && "animate-spin")}
+                  aria-hidden
+                />
+                Oppdater
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={onBack} disabled={booking.isPending}>
+              <ArrowLeft className="size-4" aria-hidden />
+              Tilbake
+            </Button>
+          </div>
         </div>
         <h1 className="mt-2 text-4xl">{title}</h1>
+        {analysis.data?.audit ? (
+          <p className="mt-1 text-[var(--color-fg-base)]/80">Kontroll av det som er ført i Fiken</p>
+        ) : null}
         <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[var(--color-fg-base)]/60">
           <span>{companyName}</span>
           <span aria-hidden>·</span>
@@ -215,14 +263,20 @@ export function ReviewScreen({
       {analysis.isError ? (
         <Alert variant="destructive">
           <OctagonX aria-hidden />
-          <AlertTitle>Kunne ikke lese bilaget</AlertTitle>
+          <AlertTitle>
+            {analysis.data ? "Fikk ikke oppdatert fra Fiken" : "Kunne ikke lese bilaget"}
+          </AlertTitle>
           <AlertDescription>{analysis.error.message}</AlertDescription>
         </Alert>
       ) : null}
 
-      {analysis.data && !bookingStarted ? (
+      {analysis.data?.audit && !bookingStarted ? (
+        <AuditReview data={{ ...analysis.data, audit: analysis.data.audit }} />
+      ) : null}
+
+      {analysis.data?.fiken && !bookingStarted ? (
         <Review
-          data={analysis.data}
+          data={{ ...analysis.data, fiken: analysis.data.fiken }}
           override={override}
           onOverride={setOverride}
           onBook={setConfirming}
@@ -243,9 +297,9 @@ export function ReviewScreen({
         </div>
       ) : null}
 
-      {analysis.data ? (
+      {analysis.data?.fiken ? (
         <ConfirmDialog
-          data={analysis.data}
+          data={{ ...analysis.data, fiken: analysis.data.fiken }}
           mode={confirming}
           title={title}
           companyName={companyName}
@@ -329,14 +383,102 @@ function Review({
   disabled: boolean
 }) {
   const { prepared, fiken, preview } = data
-  const marks = useMemo(() => buildMarks(prepared, config), [prepared])
-  const [pdfOpen, setPdfOpen] = useState(true)
-  const revealPdf = useMemo(() => () => setPdfOpen(true), [])
-
   const checks = [...prepared.checks, ...fiken.checks]
   const failed = checks.filter((c) => !c.ok).length
   const blocked = fiken.blockers.length > 0
   const canBook = !blocked && (failed === 0 || override) && !disabled
+
+  return (
+    <ReviewLayout prepared={prepared} preview={preview}>
+      <Totals prepared={prepared} blocked={blocked} failed={failed} />
+
+      <div className="flex flex-col gap-3">
+        <SectionLabel>Salg og kjøp</SectionLabel>
+        <SideCard side="sale" prepared={prepared} fiken={fiken} />
+        {prepared.plan.purchase.lines.length > 0 ? (
+          <SideCard side="purchase" prepared={prepared} fiken={fiken} />
+        ) : null}
+      </div>
+
+      {fiken.transfers.length > 0 ? (
+        <div className="flex flex-col gap-3">
+          <SectionLabel
+            aside={
+              <span className="text-xs text-[var(--color-fg-base)]/60">
+                {fiken.transfers.filter((t) => !t.existing).length} av {fiken.transfers.length}{" "}
+                føres
+              </span>
+            }
+          >
+            Fri posteringer
+          </SectionLabel>
+          {fiken.transfers.map((t) => (
+            <TransferCard key={t.voucher} transfer={t} />
+          ))}
+        </div>
+      ) : null}
+
+      <ChecksCard checks={checks} blockers={fiken.blockers} />
+
+      <MappingDetails prepared={prepared} />
+
+      {!blocked ? (
+        <div className="flex flex-col gap-3">
+          {failed > 0 ? (
+            <div className="flex items-start gap-3 rounded-xl bg-[var(--color-bg-surface)] px-4 py-3.5">
+              <Checkbox
+                id="override"
+                checked={override}
+                onCheckedChange={(v) => onOverride(v === true)}
+                className="mt-0.5"
+              />
+              <Label htmlFor="override" className="font-normal leading-snug">
+                Jeg har sett avvikene og vil føre likevel.
+              </Label>
+            </div>
+          ) : null}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Button
+              disabled={!canBook}
+              onClick={() => onBook("create")}
+              className="w-full sm:order-2"
+            >
+              <CircleCheck className="size-5" aria-hidden />
+              Bokfør
+            </Button>
+            <Button
+              variant="surface"
+              disabled={!canBook}
+              onClick={() => onBook("draft")}
+              className="w-full"
+            >
+              <FilePen className="size-5" aria-hidden />
+              Lag utkast
+            </Button>
+          </div>
+          <p className="text-xs text-[var(--color-fg-base)]/50">
+            Utkast lager salg og kjøp som utkast og de fri posteringene som åpne bilag. Bokfør fører
+            alt med en gang.
+          </p>
+        </div>
+      ) : null}
+    </ReviewLayout>
+  )
+}
+
+/** The bilag with its marks beside the cards; the PDF goes first on mobile. */
+function ReviewLayout({
+  prepared,
+  preview,
+  children,
+}: {
+  prepared: Prepared
+  preview: Analysis["preview"]
+  children: ReactNode
+}) {
+  const marks = useMemo(() => buildMarks(prepared, config), [prepared])
+  const [pdfOpen, setPdfOpen] = useState(true)
+  const revealPdf = useMemo(() => () => setPdfOpen(true), [])
 
   return (
     <MarkProvider marks={marks} onReveal={revealPdf}>
@@ -365,82 +507,120 @@ function Review({
           </p>
         </div>
 
-        <div className="flex min-w-0 flex-col gap-6 lg:order-1">
-          <Totals prepared={prepared} blocked={blocked} failed={failed} />
-
-          <div className="flex flex-col gap-3">
-            <SectionLabel>Salg og kjøp</SectionLabel>
-            <SideCard side="sale" prepared={prepared} fiken={fiken} />
-            {prepared.plan.purchase.lines.length > 0 ? (
-              <SideCard side="purchase" prepared={prepared} fiken={fiken} />
-            ) : null}
-          </div>
-
-          {fiken.transfers.length > 0 ? (
-            <div className="flex flex-col gap-3">
-              <SectionLabel
-                aside={
-                  <span className="text-xs text-[var(--color-fg-base)]/60">
-                    {fiken.transfers.filter((t) => !t.existing).length} av {fiken.transfers.length}{" "}
-                    føres
-                  </span>
-                }
-              >
-                Fri posteringer
-              </SectionLabel>
-              {fiken.transfers.map((t) => (
-                <TransferCard key={t.voucher} transfer={t} />
-              ))}
-            </div>
-          ) : null}
-
-          <ChecksCard checks={checks} blockers={fiken.blockers} />
-
-          <MappingDetails prepared={prepared} />
-
-          {!blocked ? (
-            <div className="flex flex-col gap-3">
-              {failed > 0 ? (
-                <div className="flex items-start gap-3 rounded-xl bg-[var(--color-bg-surface)] px-4 py-3.5">
-                  <Checkbox
-                    id="override"
-                    checked={override}
-                    onCheckedChange={(v) => onOverride(v === true)}
-                    className="mt-0.5"
-                  />
-                  <Label htmlFor="override" className="font-normal leading-snug">
-                    Jeg har sett avvikene og vil føre likevel.
-                  </Label>
-                </div>
-              ) : null}
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Button
-                  disabled={!canBook}
-                  onClick={() => onBook("create")}
-                  className="w-full sm:order-2"
-                >
-                  <CircleCheck className="size-5" aria-hidden />
-                  Bokfør
-                </Button>
-                <Button
-                  variant="surface"
-                  disabled={!canBook}
-                  onClick={() => onBook("draft")}
-                  className="w-full"
-                >
-                  <FilePen className="size-5" aria-hidden />
-                  Lag utkast
-                </Button>
-              </div>
-              <p className="text-xs text-[var(--color-fg-base)]/50">
-                Utkast lager salg og kjøp som utkast og de fri posteringene som åpne bilag. Bokfør
-                fører alt med en gang.
-              </p>
-            </div>
-          ) : null}
-        </div>
+        <div className="flex min-w-0 flex-col gap-6 lg:order-1">{children}</div>
       </div>
     </MarkProvider>
+  )
+}
+
+/** A month already booked: what is in Fiken against the bilag. Nothing is written from here. */
+function AuditReview({ data: { prepared, audit, preview } }: { data: AuditAnalysis }) {
+  const checks = [...prepared.checks, ...audit.checks]
+  const failed = checks.filter((c) => !c.ok).length
+  const sides = [
+    { side: "sale" as const, vouchers: audit.booked.sales },
+    ...(prepared.plan.purchase.lines.length > 0 || audit.booked.purchases.length > 0
+      ? [{ side: "purchase" as const, vouchers: audit.booked.purchases }]
+      : []),
+  ]
+
+  return (
+    <ReviewLayout prepared={prepared} preview={preview}>
+      <Totals prepared={prepared} blocked={false} failed={failed} />
+
+      <div className="flex flex-col gap-3">
+        <SectionLabel>Salg og kjøp i Fiken</SectionLabel>
+        {sides.flatMap(({ side, vouchers }) =>
+          vouchers.length > 0
+            ? vouchers.map((v) => <BookedCard key={`${side}-${v.id}`} side={side} voucher={v} />)
+            : [<BookedCard key={side} side={side} />],
+        )}
+      </div>
+
+      {audit.transfers.length > 0 ? (
+        <div className="flex flex-col gap-3">
+          <SectionLabel
+            aside={
+              <span className="text-xs text-[var(--color-fg-base)]/60">
+                {audit.transfers.filter((t) => t.existing).length} av {audit.transfers.length} ført
+              </span>
+            }
+          >
+            Fri posteringer
+          </SectionLabel>
+          {audit.transfers.map((t) => (
+            <TransferCard key={t.voucher} transfer={t} audit />
+          ))}
+        </div>
+      ) : null}
+
+      <ChecksCard checks={checks} blockers={[]} subtitle="Det som er ført i Fiken mot bilaget" />
+
+      <MappingDetails prepared={prepared} />
+
+      <p className="text-xs text-[var(--color-fg-base)]/50">
+        Måneden er allerede ført, så ingenting føres herfra. Avvik rettes i Fiken.
+      </p>
+    </ReviewLayout>
+  )
+}
+
+function BookedCard({ side, voucher }: { side: "sale" | "purchase"; voucher?: BookedVoucher }) {
+  const name = side === "sale" ? "Salg" : "Kjøp"
+  return (
+    <Card
+      icon={side === "sale" ? <Landmark /> : <ReceiptText />}
+      title={voucher?.number ? `${name} «${voucher.number}»` : name}
+      subtitle={
+        voucher
+          ? [voucher.date && formatDay(voucher.date), `id ${voucher.id}`]
+              .filter(Boolean)
+              .join(" · ")
+          : `Fant ${side === "sale" ? "ikke salget" : "ikke kjøpet"} i Fiken`
+      }
+      aside={
+        voucher ? null : (
+          <Badge variant="destructive">
+            <CircleX aria-hidden />
+            Mangler
+          </Badge>
+        )
+      }
+      className={cn(!voucher && "bg-[var(--color-bg-surface)]/50")}
+    >
+      {voucher ? (
+        <>
+          <ul className="mt-4 flex flex-col gap-2">
+            {voucher.lines.map((l, i) => (
+              <li
+                // biome-ignore lint/suspicious/noArrayIndexKey: order is fixed for a booked voucher
+                key={i}
+                className="flex items-start justify-between gap-3"
+              >
+                <span className="min-w-0">
+                  <span className="block font-semibold">{l.description ?? "Uten tekst"}</span>
+                  <span className="block text-sm text-[var(--color-fg-base)]/60">
+                    Konto {l.account} · {vatLabel(l.vatType)}
+                  </span>
+                </span>
+                <span className="flex shrink-0 flex-col items-end gap-1">
+                  <span className="tabular">{formatNok(l.netPrice)}</span>
+                  {l.vat ? (
+                    <span className="tabular text-sm text-[var(--color-fg-base)]/70">
+                      mva {formatNok(l.vat)}
+                    </span>
+                  ) : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex items-baseline justify-between gap-3 border-t border-white/10 pt-3">
+            <span className="text-sm text-[var(--color-fg-base)]/70">Sum inkl. mva</span>
+            <span className="tabular font-display text-xl">{formatNok(voucher.gross)}</span>
+          </div>
+        </>
+      ) : null}
+    </Card>
   )
 }
 
@@ -487,12 +667,12 @@ function StatusBadge({ blocked, failed }: { blocked: boolean; failed: number }) 
   )
 }
 
-const vatLabel = (l: OrderLine) =>
-  l.vatType === "HIGH"
+const vatLabel = (vatType: string) =>
+  vatType === "HIGH"
     ? "25 % mva"
-    : l.vatType === "MEDIUM"
+    : vatType === "MEDIUM"
       ? "15 % mva"
-      : l.vatType === "LOW"
+      : vatType === "LOW"
         ? "12 % mva"
         : "ingen mva"
 
@@ -555,7 +735,7 @@ function SideLine({ side, line }: { side: "sale" | "purchase"; line: OrderLine }
         <span className="min-w-0">
           <span className="block font-semibold">{line.description}</span>
           <span className="block text-sm text-[var(--color-fg-base)]/60">
-            Konto {line.account} · {vatLabel(line)}
+            Konto {line.account} · {vatLabel(line.vatType)}
           </span>
         </span>
         <span className="flex shrink-0 flex-col items-end gap-1">
@@ -571,7 +751,7 @@ function SideLine({ side, line }: { side: "sale" | "purchase"; line: OrderLine }
   )
 }
 
-function TransferCard({ transfer: t }: { transfer: Transfer }) {
+function TransferCard({ transfer: t, audit = false }: { transfer: Transfer; audit?: boolean }) {
   const [mark] = useMarksFor([payoutKey(t.voucher)])
   const { active, setActive } = useMarks()
   const on = mark !== undefined && active.includes(mark.n)
@@ -620,7 +800,7 @@ function TransferCard({ transfer: t }: { transfer: Transfer }) {
         <div className="mt-3 flex flex-col gap-1.5">
           <Badge variant="secondary" className="text-[var(--color-fg-base)]/80">
             <CircleCheck aria-hidden />
-            Finnes allerede – hoppes over
+            {audit ? "Ført i Fiken" : "Finnes allerede – hoppes over"}
           </Badge>
           {t.existing.description ? (
             <p className="text-xs text-[var(--color-fg-base)]/50">
@@ -628,6 +808,11 @@ function TransferCard({ transfer: t }: { transfer: Transfer }) {
             </p>
           ) : null}
         </div>
+      ) : audit ? (
+        <Badge variant="destructive" className="mt-3">
+          <CircleX aria-hidden />
+          Mangler i Fiken
+        </Badge>
       ) : (
         <p className="mt-3 text-xs text-[var(--color-fg-base)]/50">«{t.description}»</p>
       )}
@@ -644,7 +829,15 @@ function AccountChip({ code, name }: { code: string; name: string }) {
   )
 }
 
-function ChecksCard({ checks, blockers }: { checks: Check[]; blockers: string[] }) {
+function ChecksCard({
+  checks,
+  blockers,
+  subtitle = "Mot bilaget selv og mot Checkin-kontoen i Fiken",
+}: {
+  checks: Check[]
+  blockers: string[]
+  subtitle?: string
+}) {
   const failed = checks.filter((c) => !c.ok).length
   const figures = checkKeys(config)
   const marks = useMarksFor(figures.map((f) => f.key))
@@ -668,7 +861,7 @@ function ChecksCard({ checks, blockers }: { checks: Check[]; blockers: string[] 
       <Card
         icon={<ListChecks />}
         title={failed === 0 ? "Alt stemmer" : `${failed} av ${checks.length} avviker`}
-        subtitle="Mot bilaget selv og mot Checkin-kontoen i Fiken"
+        subtitle={subtitle}
       >
         <ul className="mt-4 flex flex-col gap-3">
           {checks.map((c) => (

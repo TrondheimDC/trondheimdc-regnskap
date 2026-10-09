@@ -3,6 +3,7 @@
 //   inspectFiken() read-only checks against Fiken: accounts, attachment, duplicates, reconciliation
 //   book()         create drafts or the real sale + purchase + a fri postering per payout,
 //                  attach the PDF, accrue
+//   auditBooked()  for a month already booked: what is in Fiken against the report (read-only)
 // Nothing here prints or prompts; callers present the results and ask for confirmation.
 
 import type { Movements, ParsedReport } from "./checkin.ts"
@@ -15,23 +16,31 @@ import type {
   InboxDocument,
   JournalEntry,
   OrderLine,
+  PurchaseResult,
+  ResultLine,
+  SaleResult,
 } from "./fiken.ts"
 import {
   buildPlan,
   formatMonthNo,
   formatNok,
+  lastDayOfMonth,
   lastDayOfPreviousMonth,
   type Plan,
   parseMonth,
 } from "./plan.ts"
 import {
   applyCheckinVat,
+  type BookedLine,
   type Check,
   type FikenCheckinAccount,
   reconcile,
+  reconcileBooked,
+  verifyBooked,
   verifyNet,
   verifyPayoutList,
   verifyPlan,
+  verifyTransfersBooked,
 } from "./verify.ts"
 
 export type Mode = "dry-run" | "draft" | "create"
@@ -384,6 +393,120 @@ async function findExistingTransfers(
         }
       : t
   })
+}
+
+/** A sale or purchase for the month that is already in Fiken. */
+export interface BookedVoucher {
+  id: number
+  /** Sale number or purchase identifier, e.g. "Checkin 2026-03". */
+  number?: string
+  date?: string
+  lines: (BookedLine & { description?: string })[]
+  gross: number
+}
+
+export interface Booked {
+  sales: BookedVoucher[]
+  purchases: BookedVoucher[]
+}
+
+function toBooked(id: number, number: string | null | undefined, v: SaleResult | PurchaseResult) {
+  const lines = v.lines.map((l: ResultLine) => ({
+    description: l.description ?? undefined,
+    account: l.account ?? "",
+    vatType: l.vatType ?? "NONE",
+    netPrice: l.netPrice ?? 0,
+    vat: l.vat ?? 0,
+  }))
+  return {
+    id,
+    number: number ?? undefined,
+    date: v.date ?? undefined,
+    lines,
+    gross: lines.reduce((s, l) => s + l.netPrice + l.vat, 0),
+  }
+}
+
+/**
+ * Sales and purchases for the month already in Fiken: the ones with our reference, and anything
+ * dated in the month and paid to or from the Checkin account (months booked by hand).
+ */
+export async function findBooked(
+  client: Fiken,
+  config: Config,
+  prepared: Prepared,
+): Promise<Booked> {
+  const { month, reference } = prepared
+  const from = `${month}-01`
+  const to = lastDayOfMonth(month)
+  const viaCheckin = (v: {
+    paymentAccount?: string | null
+    payments?: { account?: string | null }[] | null
+  }) =>
+    v.paymentAccount === config.checkinAccount ||
+    (v.payments ?? []).some((p) => p.account === config.checkinAccount)
+
+  const sales = new Map<number, SaleResult>()
+  for (const s of [
+    ...(await client.findSales(reference)),
+    ...(await client.salesBetween(from, to)).filter((s) =>
+      viaCheckin({ paymentAccount: s.paymentAccount, payments: s.salePayments }),
+    ),
+  ]) {
+    if (!s.deleted) sales.set(s.saleId, s)
+  }
+  const purchases = (await client.purchasesBetween(from, to)).filter(
+    (p) => !p.deleted && (p.identifier === reference || viaCheckin(p)),
+  )
+  return {
+    sales: [...sales.values()].map((s) => toBooked(s.saleId, s.saleNumber, s)),
+    purchases: purchases.map((p) => toBooked(p.purchaseId, p.identifier, p)),
+  }
+}
+
+export interface Audit {
+  booked: Booked
+  /** The payouts, with the ones found in Fiken marked `existing`. */
+  transfers: Transfer[]
+  checkin: FikenCheckinAccount
+  /** What is in Fiken against the report. */
+  checks: Check[]
+}
+
+/** Checks a month that is already booked against its report. Never writes. */
+export async function auditBooked(
+  client: Fiken,
+  config: Config,
+  prepared: Prepared,
+  booked?: Booked,
+): Promise<Audit> {
+  const { month, plan } = prepared
+  const found = booked ?? (await findBooked(client, config, prepared))
+  const transfers = await findExistingTransfers(client, config, prepared.transfers)
+  const checkin: FikenCheckinAccount = {
+    code: config.checkinAccount,
+    start: await client.accountBalance(config.checkinAccount, lastDayOfPreviousMonth(month)),
+    end: await client.accountBalance(config.checkinAccount, plan.date),
+  }
+  const gross = (vs: BookedVoucher[]) => vs.reduce((s, v) => s + v.gross, 0)
+  return {
+    booked: found,
+    transfers,
+    checkin,
+    checks: [
+      ...verifyBooked(plan, {
+        sale: found.sales.flatMap((v) => v.lines),
+        purchase: found.purchases.flatMap((v) => v.lines),
+      }),
+      ...verifyTransfersBooked(transfers),
+      ...reconcileBooked(
+        { sale: gross(found.sales), purchase: gross(found.purchases) },
+        prepared.source,
+        checkin,
+        config.reconcile,
+      ),
+    ],
+  }
 }
 
 function toDraft(

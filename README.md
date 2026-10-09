@@ -45,6 +45,7 @@ pnpm dev
 pnpm foring login                 # OAuth in the browser
 pnpm foring report                # dry-run: read the inbox bilag and check it
 pnpm foring report --mode create  # book, after confirmation
+pnpm foring check --month 2026-03 # check a booked month against its bilag
 ```
 
 The token is stored in `~/.config/trondheimdc-regnskap/oauth-token.json`. Tests use a generated PDF (`test/pdf-fixture.ts`). Do not commit a real regnskapsbilag.
