@@ -1,0 +1,23 @@
+[tools]
+node = "24"
+pnpm = "10.30"
+
+[tasks.install]
+description = "Install dependencies"
+run = "pnpm install --frozen-lockfile"
+
+[tasks.dev]
+description = "Start dev server (http://localhost:3000, proxies /api/fiken to Fiken)"
+run = "pnpm run dev"
+
+[tasks.build]
+description = "Static export to out/"
+run = "pnpm run build"
+
+[tasks.lint]
+description = "Biome"
+run = "pnpm run lint"
+
+[tasks.check]
+description = "Lint, typecheck and tests"
+run = ["pnpm run lint", "pnpm run typecheck", "pnpm run test"]

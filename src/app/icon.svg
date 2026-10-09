@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <!-- Source: src/app/icon.svg. Edit that file, then run `node scripts/build-icons.mjs`. -->
+  <rect width="1024" height="1024" rx="205" fill="#0f0f0f"/>
+  <!-- T-account (T-konto): the TDC "T" is the account header and the debet | kredit divider -->
+  <g fill="#9bf7a9">
+    <path d="M152 222h720v150H572v430H452V372H152Z"/>
+    <!-- Entries, amounts right-aligned in each column -->
+    <path d="M242 432h170v48H242ZM292 512h120v48H292ZM682 432h150v48H682ZM612 512h220v48H612Z"/>
+    <!-- Double rule, then equal sums: the account balances -->
+    <path d="M212 616h200v18H212ZM212 652h200v18H212ZM632 616h200v18H632ZM632 652h200v18H632Z"/>
+    <path d="M252 706h160v48H252ZM672 706h160v48H672Z"/>
+  </g>
+  <!-- TDC wordmark (src/components/tdc-logo.tsx) as the account name -->
+  <g fill="#0f0f0f" transform="translate(313.6 255.5) scale(1.6)">
+    <path d="M10.0986 17.333H0L0 0L39.8145 0V17.333H29.7178V52H10.0986V17.333Z"/>
+    <path transform="translate(47.09 0)" d="M153.732 34.667C153.732 44.2406 145.983 52 136.422 52H0L0 0L136.422 0C145.983 0 153.732 7.75938 153.732 17.333V34.667Z"/>
+    <path transform="translate(208.1 0)" d="M39.8145 17.333H19.9072V34.667H39.8145V52H17.3105C7.74943 52 0.000113284 44.2407 0 34.667L0 17.333C0.000185034 7.75938 7.74948 0 17.3105 0L39.8145 0V17.333Z"/>
+  </g>
+</svg>

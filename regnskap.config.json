@@ -1,0 +1,57 @@
+{
+  "$comment": "Oppskriften for føring av Checkin-regnskapsbilag i Fiken. Bygges inn i web-appen; endringer krever ny deploy.",
+  "checkinAccount": "1960:10001",
+  "bankAccount": "1920:10001",
+  "sale": {
+    "account": "3000",
+    "lines": [
+      {
+        "description": "TDC 2026",
+        "vatType": "HIGH",
+        "from": [
+          "3000"
+        ]
+      }
+    ]
+  },
+  "purchase": {
+    "account": "4300",
+    "lines": [
+      {
+        "description": "Checkin gebyr",
+        "vatType": "HIGH",
+        "from": [
+          "4300"
+        ]
+      },
+      {
+        "description": "Transaksjonsgebyr",
+        "vatType": "NONE",
+        "from": [
+          "4335"
+        ]
+      }
+    ]
+  },
+  "ignore": [
+    "3990"
+  ],
+  "reconcile": {
+    "payoutAccounts": [
+      "1920"
+    ],
+    "balanceAccounts": [
+      "1500",
+      "1921"
+    ],
+    "outputVat": {
+      "HIGH": "2701"
+    },
+    "inputVat": {
+      "HIGH": "2711"
+    }
+  },
+  "inbox": {
+    "reportName": "Regnskapsbilag"
+  }
+}

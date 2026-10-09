@@ -1,0 +1,16 @@
+---
+description: Norwegian UI copy, Fiken writes, money in øre, and no layout pop-in
+alwaysApply: true
+---
+
+# UI
+
+Follow AGENTS.md.
+
+- UI copy is Norwegian bokmål. Keep Fiken, Checkin, bilag, bokfør, utkast, superføring, fri postering, mva as those words.
+- Never write to Fiken without showing the plan and an explicit confirm (`AlertDialog`, cancel = **Avbryt**).
+- Money is integer øre; format at the edges. Checks belong in `src/lib/verify.ts`.
+- Fiken calls go through `FikenClient` (one request at a time) and TanStack Query; mutations update the cache.
+- Do not flash a loading line and then replace it with content. Boot/login shows `AppLoading`; reserve space for late content.
+- Empty and error states are a composed block (illustration, heading, one action) via `ErrorScreen`, not a single sentence.
+- Tappable controls (including choice cards) use shared `Button` — not a bare surface `<button>` that looks inert.

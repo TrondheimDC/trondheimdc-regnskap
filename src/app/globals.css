@@ -1,0 +1,439 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Native controls, scrollbars and autofill follow the dark UI. */
+  color-scheme: dark;
+  --color-white-1: #fefefe;
+  --color-white-2: #f4f4f4;
+  --color-black: #0f0f0f;
+  --color-black-2: #363636;
+  --color-black-3: #292929;
+  --color-green-1: #9bf7a9;
+  --color-green-3: #67e47b;
+  --color-bg-base: var(--color-black);
+  --color-bg-surface: var(--color-black-2);
+  --color-bg-danger: #f1422a;
+  --color-fg-base: var(--color-white-1);
+  --color-fg-brand: var(--color-green-1);
+  --color-fg-always-dark: var(--color-black-3);
+  --font-family-sans: var(--font-plex), "IBM Plex Sans", sans-serif;
+  --font-family-display: var(--font-grotesk), "Space Grotesk", sans-serif;
+  --font-family-mono: var(--font-mono), "Space Mono", monospace;
+  --spacing-4: 16px;
+  --radius-xl: 16px;
+  --sidebar: #161616;
+  --sidebar-foreground: #fefefe;
+  --sidebar-primary: #9bf7a9;
+  --sidebar-primary-foreground: #292929;
+  --sidebar-accent: #363636;
+  --sidebar-accent-foreground: #fefefe;
+  --sidebar-border: rgb(255 255 255 / 12%);
+  --sidebar-ring: #9bf7a9;
+
+  /* shadcn / better-auth-ui tokens (mapped onto the app palette) */
+  --background: var(--color-bg-base);
+  --foreground: var(--color-fg-base);
+  --card: var(--color-bg-surface);
+  --card-foreground: var(--color-fg-base);
+  --popover: var(--color-bg-surface);
+  --popover-foreground: var(--color-fg-base);
+  --primary: var(--color-fg-brand);
+  --primary-foreground: var(--color-fg-always-dark);
+  --secondary: var(--color-black-3);
+  --secondary-foreground: var(--color-fg-base);
+  --muted: var(--color-black-3);
+  --muted-foreground: rgb(254 254 254 / 70%);
+  --accent: var(--color-bg-surface);
+  --accent-foreground: var(--color-fg-base);
+  --destructive: var(--color-bg-danger);
+  --border: rgb(255 255 255 / 15%);
+  --input: rgb(255 255 255 / 15%);
+  --ring: var(--color-fg-brand);
+  --radius: 0.75rem;
+}
+
+@theme inline {
+  --color-bg: var(--color-bg-base);
+  --color-surface: var(--color-bg-surface);
+  --color-fg: var(--color-fg-base);
+  --color-brand: var(--color-fg-brand);
+  --font-sans: var(--font-family-sans);
+  --font-display: var(--font-family-display);
+  --font-mono: var(--font-family-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+}
+
+html,
+body {
+  background: var(--color-bg-base);
+  color: var(--color-fg-base);
+  font-family: var(--font-family-sans);
+  min-height: 100%;
+  /* Buttons draw their own press state (btn-press). */
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: var(--color-fg-brand);
+  color: var(--color-fg-always-dark);
+}
+
+body {
+  margin: 0;
+}
+
+/*
+ * Viewport units: browsers that do not understand dvh/svh keep the vh line.
+ * Needed for older Safari and some desktop Firefox builds.
+ */
+.min-h-dvh {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.h-dvh {
+  height: 100vh;
+  height: 100dvh;
+}
+
+.h-svh {
+  height: 100vh;
+  height: 100svh;
+}
+
+h1,
+h2 {
+  font-family: var(--font-family-display);
+  font-weight: 400;
+  line-height: 1.2;
+}
+
+
+@keyframes attendee-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.attendee-reveal {
+  animation: attendee-reveal 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.attendee-stagger > * {
+  animation: attendee-reveal 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.attendee-stagger > *:nth-child(1) {
+  animation-delay: 40ms;
+}
+.attendee-stagger > *:nth-child(2) {
+  animation-delay: 140ms;
+}
+.attendee-stagger > *:nth-child(3) {
+  animation-delay: 260ms;
+}
+.attendee-stagger > *:nth-child(4) {
+  animation-delay: 360ms;
+}
+.attendee-stagger > *:nth-child(5) {
+  animation-delay: 460ms;
+}
+.attendee-stagger > *:nth-child(6) {
+  animation-delay: 560ms;
+}
+
+/* Press feedback for shared buttons.
+ * Do not set overflow:hidden here — in a flex column that lets items shrink
+ * below their content height and clips multi-line labels (esp. Android). */
+.btn-press {
+  position: relative;
+}
+
+.btn-press::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--color-white-1) 18%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+
+.btn-press:active::after {
+  opacity: 1;
+  transition-duration: 0.05s;
+}
+
+@keyframes app-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes app-loading-label {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+.app-loading-logo {
+  animation: app-loading-pulse 1.6s ease-in-out infinite;
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+
+.app-loading-label {
+  animation: app-loading-label 1.6s ease-in-out infinite;
+}
+
+@keyframes error-label-feed {
+  from {
+    transform: translateY(-116px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes error-lcd-blink {
+  0%,
+  55%,
+  100% {
+    opacity: 1;
+  }
+  65%,
+  90% {
+    opacity: 0.15;
+  }
+}
+
+.error-reveal {
+  animation: auth-card-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.error-label-feed {
+  animation: error-label-feed 1.4s cubic-bezier(0.45, 0, 0.2, 1) 0.45s both;
+}
+
+.error-lcd-blink {
+  animation: error-lcd-blink 1.4s steps(1, end) infinite;
+}
+
+.error-glow-danger {
+  --color-fg-brand: var(--color-bg-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-press {
+    transition: none;
+  }
+
+  .btn-press:active {
+    transform: none;
+  }
+
+  .btn-press::after {
+    display: none;
+  }
+
+  .app-loading-logo,
+  .app-loading-label {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .auth-glow-a,
+  .auth-glow-b {
+    animation: none;
+  }
+
+  .auth-card,
+  .auth-mark,
+  .error-reveal,
+  .error-label-feed,
+  .error-lcd-blink {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes auth-glow-drift-a {
+  0%,
+  100% {
+    transform: translate(-8%, -6%) scale(1);
+  }
+  50% {
+    transform: translate(4%, 6%) scale(1.15);
+  }
+}
+
+@keyframes auth-glow-drift-b {
+  0%,
+  100% {
+    transform: translate(6%, 4%) scale(1);
+  }
+  50% {
+    transform: translate(-6%, -8%) scale(1.1);
+  }
+}
+
+@keyframes auth-mark-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes auth-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.auth-glow-a {
+  position: absolute;
+  top: -20%;
+  left: -10%;
+  width: 60vw;
+  height: 60vw;
+  max-width: 640px;
+  max-height: 640px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--color-fg-brand) 26%, transparent),
+    transparent 70%
+  );
+  filter: blur(60px);
+  animation: auth-glow-drift-a 14s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.auth-glow-b {
+  position: absolute;
+  bottom: -25%;
+  right: -12%;
+  width: 55vw;
+  height: 55vw;
+  max-width: 560px;
+  max-height: 560px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--color-fg-brand) 16%, transparent),
+    transparent 70%
+  );
+  filter: blur(70px);
+  animation: auth-glow-drift-b 18s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.auth-mark {
+  animation: auth-mark-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.auth-card {
+  position: relative;
+  backdrop-filter: blur(16px);
+  background: color-mix(in srgb, var(--color-bg-surface) 78%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-fg-brand) 20%, transparent),
+    0 24px 60px -20px color-mix(in srgb, black 70%, transparent),
+    0 0 48px -12px color-mix(in srgb, var(--color-fg-brand) 25%, transparent);
+  animation: auth-card-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.08s both;
+}
+
+/* Amounts: aligned digits, never wrapped mid-number. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Highlights over values in the rendered PDF (pdf-preview.tsx). Sized in cqw of the page,
+ * so they scale with the page image. --mark is the colour of the value's kind. */
+.pdf-mark {
+  background: color-mix(in srgb, var(--mark) 28%, transparent);
+  box-shadow: 0 0 0 0.18cqw var(--mark);
+}
+
+.pdf-mark-on {
+  background: color-mix(in srgb, var(--mark) 45%, transparent);
+  box-shadow:
+    0 0 0 0.3cqw var(--mark),
+    0 0 0 1.1cqw color-mix(in srgb, var(--mark) 30%, transparent);
+  z-index: 1;
+}
+
+.pdf-mark-n {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.9cqw;
+  height: 1.9cqw;
+  padding: 0 0.35cqw;
+  border-radius: 999px;
+  background: var(--mark);
+  color: var(--color-fg-always-dark);
+  font-family: var(--font-family-sans);
+  font-size: 1.3cqw;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 0.15cqw rgb(255 255 255 / 85%);
+}
