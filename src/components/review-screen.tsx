@@ -836,9 +836,10 @@ function BookingStatus({
       {error ? (
         <Alert variant="destructive">
           <OctagonX aria-hidden />
-          <AlertTitle>{error.message}</AlertTitle>
+          <AlertTitle>Et steg feilet</AlertTitle>
           <AlertDescription>
-            Stegene merket ✓ er utført i Fiken. Fullfør eller rydd opp resten i Fiken.
+            <p className="select-text break-all font-mono text-xs">{error.message}</p>
+            <p>Stegene merket ✓ er utført i Fiken. Fullfør eller rydd opp resten i Fiken.</p>
           </AlertDescription>
         </Alert>
       ) : null}
