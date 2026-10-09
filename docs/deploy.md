@@ -4,8 +4,6 @@ A static site (Next.js `output: "export"`), the same way as utlegg. The only dif
 
 There is no app server, no database and no secret on the server. The login is OAuth with PKCE in the browser, and the token lives only in the browser tab (sessionStorage).
 
-GitHub Actions are off (`workflow_dispatch` only) until we are ready to deploy. The intended pipeline:
-
 ```text
 push to main
     → GitHub Actions: lint, typecheck, test, next build (NEXT_PUBLIC_FIKEN_CLIENT_ID)

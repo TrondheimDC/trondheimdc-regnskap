@@ -6,6 +6,9 @@ const isDev = process.env.NODE_ENV === "development"
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  allowedDevOrigins: process.env.ALLOWED_DEV_ORIGINS?.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
   ...(isDev
     ? {
         async rewrites() {
