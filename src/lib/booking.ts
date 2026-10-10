@@ -5,6 +5,7 @@
 //   book()         create drafts or the real sale + purchase + a fri postering per payout (the
 //                  parts chosen, never one already in Fiken), attach the PDF, accrue
 //   auditBooked()  for a month already booked: what is in Fiken against the report (read-only)
+//   bookRounding() for such a month booked with Fiken's VAT: a fri postering for the øreavrunding
 // Nothing here prints or prompts; callers present the results and ask for confirmation.
 
 import type { Movements, ParsedReport } from "./checkin.ts"
@@ -37,13 +38,17 @@ import {
   type Check,
   type FikenCheckinAccount,
   type Rounding,
+  type RoundingCorrection,
   reconcile,
   reconcileBooked,
+  roundingCorrection,
+  roundingDrift,
   roundingLineText,
   verifyBooked,
   verifyNet,
   verifyPayoutList,
   verifyPlan,
+  verifyRounding,
   verifyTransfersBooked,
 } from "./verify.ts"
 
@@ -376,6 +381,22 @@ const addDays = (date: string, days: number) => {
   return d.toISOString().slice(0, 10)
 }
 
+/** Cancelled entries and their counter-entries no longer move any money. */
+const isLive = (e: JournalEntry) => !e.offsetTransactionId && e.transactionType !== "Annullering"
+
+/**
+ * What øreavrunding entries dated in the month moved on the Checkin account: entries between the
+ * Checkin account and the rounding account, booked by us or by hand.
+ */
+async function findRounded(client: Fiken, config: Config, month: string): Promise<number> {
+  const entries = await client.journalEntriesBetween(`${month}-01`, lastDayOfMonth(month))
+  return entries
+    .filter((e) => isLive(e) && e.lines.some((l) => l.account === config.reconcile.roundingAccount))
+    .flatMap((e) => e.lines)
+    .filter((l) => l.account === config.checkinAccount)
+    .reduce((s, l) => s + l.amount, 0)
+}
+
 /**
  * Marks payouts that are already moved from the Checkin account in Fiken: either booked by us
  * (the voucher is in the description) or a superføring from the bank reconciliation (an entry
@@ -392,8 +413,7 @@ async function findExistingTransfers(
     addDays(dates[0] ?? "", -TRANSFER_WINDOW_BEFORE),
     addDays(dates.at(-1) ?? "", TRANSFER_WINDOW_AFTER),
   )
-  // Cancelled entries and their counter-entries no longer move any money.
-  const live = entries.filter((e) => !e.offsetTransactionId && e.transactionType !== "Annullering")
+  const live = entries.filter(isLive)
   const used = new Set<number>()
   const take = (match: (e: JournalEntry) => boolean) => {
     const entry = live.find((e) => !used.has(e.journalEntryId) && match(e))
@@ -504,6 +524,8 @@ export interface Audit {
   checkin: FikenCheckinAccount
   /** What is in Fiken against the report. */
   checks: Check[]
+  /** The fri postering that evens out øreavrunding, if the month is a few øre off. See `bookRounding`. */
+  rounding?: RoundingCorrection
 }
 
 /** Checks a month that is already booked against its report. Never writes. */
@@ -522,23 +544,85 @@ export async function auditBooked(
     end: await client.accountBalance(config.checkinAccount, plan.date),
   }
   const gross = (vs: BookedVoucher[]) => vs.reduce((s, v) => s + v.gross, 0)
+  const rounded = await findRounded(client, config, month)
+  const sums = { sale: gross(found.sales), purchase: gross(found.purchases) }
+  // Only a month with both its sale and purchase in Fiken can be off by rounding.
+  const complete =
+    found.sales.length > 0 && (plan.purchase.lines.length === 0 || found.purchases.length > 0)
+  const drift = complete ? roundingDrift(plan, sums, rounded) : undefined
   return {
     booked: found,
     transfers,
     checkin,
+    rounding: drift && roundingCorrection(plan, drift, { ...config, ...config.reconcile }),
     checks: [
       ...verifyBooked(plan, {
         sale: found.sales.flatMap((v) => v.lines),
         purchase: found.purchases.flatMap((v) => v.lines),
       }),
+      ...(drift ? verifyRounding(drift, config.checkinAccount) : []),
       ...verifyTransfersBooked(transfers),
-      ...reconcileBooked(
-        { sale: gross(found.sales), purchase: gross(found.purchases) },
-        prepared.source,
-        checkin,
-        config.reconcile,
-      ),
+      ...reconcileBooked({ ...sums, rounded }, prepared.source, checkin, config.reconcile),
     ],
+  }
+}
+
+/**
+ * Books the øreavrunding `auditBooked` found for a month booked with Fiken's VAT: a fri postering
+ * between the Checkin account and the rounding account on the last day of the month, with the
+ * bilag attached. Callers must have shown it and gotten confirmation. Refuses if Fiken has changed
+ * since the audit, so the same rounding is never booked twice.
+ */
+export async function bookRounding(
+  client: Fiken,
+  config: Config,
+  prepared: Prepared,
+  audit: Audit,
+  mode: Exclude<Mode, "dry-run">,
+  onStep: (step: string) => void = () => {},
+): Promise<BookResult> {
+  const r = audit.rounding
+  if (!r) throw new Error("Det er ingen øreavrunding å føre for måneden")
+  if ((await findRounded(client, config, prepared.month)) !== r.rounded)
+    throw new Error("Øreavrundingen er endret i Fiken siden kontrollen. Oppdater og se over igjen.")
+  const steps: string[] = []
+  const step = (s: string) => {
+    steps.push(s)
+    onStep(s)
+  }
+  const open = mode === "draft"
+  const entryId = await client.createGeneralJournalEntry({
+    description: r.description,
+    open,
+    journalEntries: [
+      {
+        description: r.description,
+        date: r.date,
+        lines: [
+          {
+            amount: Math.abs(r.amount),
+            debitAccount: r.debitAccount,
+            creditAccount: r.creditAccount,
+          },
+        ],
+      },
+    ],
+  })
+  step(
+    `Øreavrunding ført som ${open ? "åpen " : ""}fri postering: ${formatNok(Math.abs(r.amount))} fra ${r.creditAccount} til ${r.debitAccount} (id ${entryId})`,
+  )
+  const doc = prepared.source.doc
+  if (doc) {
+    await client.attachInboxDocument({ kind: "journalEntry", id: entryId }, doc.documentId)
+    step("Bilaget lagt ved øreavrundingen")
+  }
+  if (open) return { steps }
+  return {
+    steps,
+    balance: {
+      actual: await client.accountBalance(config.checkinAccount, r.date),
+      expected: audit.checkin.end + r.amount,
+    },
   }
 }
 

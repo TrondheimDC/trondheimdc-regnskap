@@ -125,6 +125,8 @@ pnpm foring check bilag-mars.pdf      # eller fra en lokal PDF
 
 `check` avslutter med feilkode 1 hvis noe avviker.
 
+En måned som er ført med mva regnet av Fiken, er noen øre feil. Den kan rettes herfra, se [Rette eldre måneder](#rette-eldre-måneder).
+
 ## Utbetalinger (fri posteringer)
 
 Hver rad i *Utbetalingsoversikt* i bilaget blir én fri postering:
@@ -205,6 +207,24 @@ Alternativet, å føre Checkins netto og la Fiken regne 25 %, gir riktig netto m
 **Grenser.** Det gjøres bare når avviket er under 1 kr og det er én linje med den mva-typen. Større avvik blir stående og fanges av kontrollene. Mva-kontrollen feiler hvis avrundingen havner i Skatteetatens disfavør: mindre utgående mva enn billettene viser, eller mer inngående mva enn Checkin fakturerte. Det er noen øre; vurder om du vil føre likevel.
 
 Slå av med `"reconcile": { "useCheckinVat": false }`. Da føres Checkins netto med 25 % mva, og Checkin-kontoen vil avvike med noen øre.
+
+### Rette eldre måneder
+
+Måneder som er ført før dette, med Checkins netto og mva regnet av Fiken, har samme avvik: summen inkl. mva er noen øre feil, og Checkin-kontoen avviker like mye. Kontrollen av en ført måned finner det og foreslår en *fri postering* som retter det:
+
+| | |
+|---|---|
+| Debet / kredit | `checkinAccount` (1960:10001) ↔ `reconcile.roundingAccount` (standard 7740 Øreavrunding), uten mva |
+| Beløp | Salg − kjøp inkl. mva i Fiken mot det samme i bilaget, for den måneden |
+| Dato | Siste dag i måneden |
+| Tekst | `Øreavrunding Checkin 2026-03: ført med mva regnet av Fiken, …` med begge summene |
+
+- **Web-app:** åpne den førte måneden. Kortet «Øreavrunding» viser posteringen. Trykk «Før øreavrunding» og bekreft.
+- **CLI:** `pnpm foring check --month 2026-03` viser forslaget, og `--mode create` fører det etter bekreftelse.
+
+Mva rettes ikke. Mva-meldingene for de terminene er sendt, og avviket er noen øre per måned. Hver måned rettes for seg, så rekkefølgen spiller ingen rolle. Når en måned er rettet, foreslås det ikke igjen, fordi kontrollen regner med alle posteringer mellom Checkin-kontoen og avrundingskontoen i måneden, også de som er ført for hånd. Forslaget gis bare når avviket er under 1 kr og både salget og kjøpet er funnet. Større avvik er en feil linje, ikke avrunding.
+
+Er perioden låst i Fiken, avviser Fiken posteringen. Da må den føres for hånd i en åpen periode. Verktøyet finner bare øreavrundinger datert i måneden, så det vil fortsatt foreslå en for den måneden. Ikke før den på nytt.
 
 ## Avstemming av Checkin-kontoen
 

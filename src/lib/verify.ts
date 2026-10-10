@@ -328,7 +328,7 @@ export function verifyBooked(
         label: `${label}: netto i Fiken mot bilaget`,
         expected: h?.net ?? 0,
         actual: w?.net ?? 0,
-        ok: (h?.net ?? 0) === (w?.net ?? 0),
+        ok: Math.abs((h?.net ?? 0) - (w?.net ?? 0)) <= TOLERANCE_ORE,
         source: "Fiken",
         hint,
       })
@@ -363,11 +363,11 @@ export function verifyTransfersBooked(
 
 /**
  * Reconciles the Checkin account for a month that is already booked. `booked` is the sale and
- * purchase found in Fiken; they are in the month's movement, so they are taken out to get what
- * was moved to the bank.
+ * purchase found in Fiken, and `rounded` what øreavrunding entries moved on the account; they are
+ * in the month's movement, so they are taken out to get what was moved to the bank.
  */
 export function reconcileBooked(
-  booked: { sale: number; purchase: number },
+  booked: { sale: number; purchase: number; rounded?: number },
   report: { closing: Movements; balance: Movements },
   fiken: FikenCheckinAccount,
   config: { payoutAccounts: string[]; balanceAccounts?: string[] },
@@ -375,7 +375,7 @@ export function reconcileBooked(
   const checks: Check[] = []
   const paidOut = sumAccounts(config.payoutAccounts, report.balance)
   if (paidOut !== undefined) {
-    const movedOut = fiken.start - fiken.end + booked.sale - booked.purchase
+    const movedOut = fiken.start - fiken.end + booked.sale - booked.purchase + (booked.rounded ?? 0)
     checks.push({
       label: `Utbetalt til bank: Checkin ${config.payoutAccounts.join("+")} mot flyttet fra ${fiken.code} i Fiken`,
       expected: movedOut,
@@ -399,4 +399,91 @@ export function reconcileBooked(
     }
   }
   return checks
+}
+
+/**
+ * A month booked before we booked Checkin's gross (see `Rounding`): Checkin's net with VAT
+ * computed by Fiken. The gross, and so the Checkin account, is then a few øre off Checkin's.
+ * Counted per month, so correcting one month never changes what another month is off by.
+ */
+export interface RoundingDrift {
+  /** Sale minus purchase, incl. VAT, as booked in Fiken. */
+  booked: number
+  /** The same according to the report: Checkin's gross. */
+  checkin: number
+  /** What øreavrunding entries dated in the month already moved on the Checkin account. */
+  rounded: number
+  /** What the Checkin account is off by from this month: positive means too much in Fiken. */
+  off: number
+}
+
+export function roundingDrift(
+  plan: Plan,
+  booked: { sale: number; purchase: number },
+  rounded: number,
+): RoundingDrift {
+  const sum = booked.sale - booked.purchase
+  return {
+    booked: sum,
+    checkin: plan.expectedPayout,
+    rounded,
+    off: sum + rounded - plan.expectedPayout,
+  }
+}
+
+const ROUNDING_LABEL = "Salg − kjøp inkl. mva"
+
+/** The check from `verifyRounding`. Booking the øreavrunding is what fixes it, so it doesn't block that. */
+export const isRoundingCheck = (c: Check) => c.label.startsWith(ROUNDING_LABEL)
+
+/**
+ * Sale minus purchase incl. VAT in Fiken (with øreavrunding entries) against the report. Only for
+ * a difference within rounding; a bigger one is a wrong or missing line, which `verifyBooked` flags.
+ */
+export function verifyRounding(drift: RoundingDrift, checkinAccount: string): Check[] {
+  if (Math.abs(drift.off) > TOLERANCE_ORE) return []
+  return [
+    {
+      label: `${ROUNDING_LABEL}${drift.rounded ? " og øreavrunding" : ""} i Fiken mot bilaget`,
+      expected: drift.booked + drift.rounded,
+      actual: drift.checkin,
+      ok: drift.off === 0,
+      source: "Fiken",
+      hint: `Måneden er ført med netto fra Checkin og mva regnet av Fiken, så ${checkinAccount} er ${formatNok(Math.abs(drift.off))} for ${drift.off > 0 ? "høy" : "lav"}. Før øreavrunding for å rette det.`,
+    },
+  ]
+}
+
+/** A fri postering between the Checkin account and the rounding account that evens out `RoundingDrift`. */
+export interface RoundingCorrection {
+  month: string
+  /** Last day of the month, so the month's own balance is right. */
+  date: string
+  /** Change to the Checkin account: negative takes money out of it. Never 0. */
+  amount: number
+  debitAccount: string
+  creditAccount: string
+  description: string
+  /** `RoundingDrift.rounded` it was computed from; booking refuses if Fiken has changed since. */
+  rounded: number
+}
+
+/** The correction for a drift within rounding (≤ 1 kr), or undefined if there is nothing to correct. */
+export function roundingCorrection(
+  plan: Plan,
+  drift: RoundingDrift,
+  accounts: { checkinAccount: string; roundingAccount: string },
+): RoundingCorrection | undefined {
+  if (drift.off === 0 || Math.abs(drift.off) > TOLERANCE_ORE) return undefined
+  const amount = -drift.off
+  const { checkinAccount, roundingAccount } = accounts
+  return {
+    month: plan.month,
+    date: plan.date,
+    amount,
+    debitAccount: amount > 0 ? checkinAccount : roundingAccount,
+    creditAccount: amount > 0 ? roundingAccount : checkinAccount,
+    description: `Øreavrunding Checkin ${plan.month}: ført med mva regnet av Fiken, Checkin regner mva per billett. Sum inkl. mva i bilaget ${formatNok(drift.checkin)}, i Fiken ${formatNok(drift.booked + drift.rounded)}`,
+    rounded: drift.rounded,
+  }
 }

@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CircleCheck,
   CircleX,
+  Coins,
   FilePen,
   FileText,
   Landmark,
@@ -52,6 +53,7 @@ import {
   type BookResult,
   book,
   bookable,
+  bookRounding,
   type Existing,
   type FikenState,
   inspectFiken,
@@ -71,7 +73,7 @@ import { buildMarks, checkKeys, lineKeys, payoutKey, vatKey } from "@/lib/marks"
 import { renderPdfPage } from "@/lib/pdf-render"
 import { formatNok } from "@/lib/plan"
 import { cn } from "@/lib/utils"
-import { type Check, explainRounding } from "@/lib/verify"
+import { type Check, explainRounding, isRoundingCheck, type RoundingCorrection } from "@/lib/verify"
 
 export type Selection = { kind: "inbox"; doc: ReportDocument } | { kind: "file"; file: File }
 
@@ -224,6 +226,20 @@ export function ReviewScreen({
     },
   })
 
+  // A booked month that is a few øre off: the one thing that can be booked from the audit.
+  const rounding = useMutation({
+    mutationFn: () => {
+      const { prepared, audit } = analysis.data ?? {}
+      if (!prepared || !audit) throw new Error("Bilaget er ikke lest ennå")
+      return bookRounding(client, config, prepared, audit, "create")
+    },
+    onSuccess: async () => {
+      toast.success("Øreavrunding bokført i Fiken")
+      await analysis.refetch()
+    },
+    onError: () => toast.error("Øreavrundingen ble ikke ført"),
+  })
+
   const month =
     analysis.data?.prepared.month ?? (selection.kind === "inbox" ? selection.doc.month : undefined)
   const title = month ? formatMonth(month) : "Regnskapsbilag"
@@ -301,7 +317,15 @@ export function ReviewScreen({
       ) : null}
 
       {analysis.data?.audit && !bookingStarted ? (
-        <AuditReview data={{ ...analysis.data, audit: analysis.data.audit }} />
+        <AuditReview
+          data={{ ...analysis.data, audit: analysis.data.audit }}
+          companyName={companyName}
+          rounding={{
+            pending: rounding.isPending,
+            error: rounding.error,
+            onBook: () => rounding.mutate(),
+          }}
+        />
       ) : null}
 
       {analysis.data?.fiken && parts && !bookingStarted ? (
@@ -649,8 +673,25 @@ function ReviewLayout({
   )
 }
 
-/** A month already booked: what is in Fiken against the bilag. Nothing is written from here. */
-function AuditReview({ data: { prepared, audit, preview } }: { data: AuditAnalysis }) {
+interface RoundingAction {
+  pending: boolean
+  error: Error | null
+  onBook: () => void
+}
+
+/**
+ * A month already booked: what is in Fiken against the bilag. Only an øreavrunding can be
+ * written from here.
+ */
+function AuditReview({
+  data: { prepared, audit, preview },
+  companyName,
+  rounding,
+}: {
+  data: AuditAnalysis
+  companyName: string
+  rounding: RoundingAction
+}) {
   const checks = [...prepared.checks, ...audit.checks]
   const failed = checks.filter((c) => !c.ok).length
   const sides = [
@@ -692,12 +733,124 @@ function AuditReview({ data: { prepared, audit, preview } }: { data: AuditAnalys
 
       <ChecksCard checks={checks} blockers={[]} subtitle="Føringen i Fiken mot bilaget" />
 
+      {audit.rounding ? (
+        <RoundingCard
+          correction={audit.rounding}
+          othersFailed={checks.filter((c) => !c.ok && !isRoundingCheck(c)).length}
+          companyName={companyName}
+          action={rounding}
+        />
+      ) : null}
+
       <MappingDetails prepared={prepared} />
 
       <p className="text-xs text-[var(--color-fg-base)]/50">
-        Måneden er allerede ført, så her kan du bare kontrollere. Avvik retter du i Fiken.
+        {audit.rounding
+          ? "Måneden er allerede ført. Øreavrundingen kan føres herfra, andre avvik retter du i Fiken."
+          : "Måneden er allerede ført, så her kan du bare kontrollere. Avvik retter du i Fiken."}
       </p>
     </ReviewLayout>
+  )
+}
+
+/** The fri postering that evens out a month booked with Fiken's VAT, with its own confirm. */
+function RoundingCard({
+  correction: r,
+  othersFailed,
+  companyName,
+  action,
+}: {
+  correction: RoundingCorrection
+  othersFailed: number
+  companyName: string
+  action: RoundingAction
+}) {
+  const [confirming, setConfirming] = useState(false)
+  const [override, setOverride] = useState(false)
+  const amount = formatNok(Math.abs(r.amount))
+  const accountName = (code: string) =>
+    code === config.checkinAccount ? "Checkin" : "Øreavrunding"
+  const canBook = !action.pending && (othersFailed === 0 || override)
+
+  return (
+    <Card
+      icon={<Coins />}
+      title="Øreavrunding"
+      subtitle={`${config.checkinAccount} er ${amount} for ${r.amount < 0 ? "høy" : "lav"}`}
+    >
+      <p className="mt-3 text-sm text-[var(--color-fg-base)]/80">
+        Måneden er ført med netto fra Checkin og mva regnet av Fiken. Checkin regner mva per
+        billett, så summen inkl. mva avviker med noen øre. En fri postering retter Checkin-kontoen.
+      </p>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+        <AccountChip code={r.creditAccount} name={accountName(r.creditAccount)} />
+        <ArrowRight className="size-4 shrink-0 text-[var(--color-fg-base)]/50" aria-label="til" />
+        <AccountChip code={r.debitAccount} name={accountName(r.debitAccount)} />
+        <span className="ml-auto flex flex-col items-end">
+          <span className="tabular font-display text-lg leading-snug">{amount}</span>
+          <span className="text-xs text-[var(--color-fg-base)]/60">{formatDay(r.date)}</span>
+        </span>
+      </div>
+      <p className="mt-2 text-xs text-[var(--color-fg-base)]/50">«{r.description}»</p>
+
+      {othersFailed > 0 ? (
+        <div className="mt-4 flex items-start gap-3">
+          <Checkbox
+            id="rounding-override"
+            checked={override}
+            onCheckedChange={(v) => setOverride(v === true)}
+            className="mt-0.5"
+          />
+          <Label htmlFor="rounding-override" className="font-normal leading-snug">
+            Jeg har sett de andre avvikene og vil føre øreavrundingen likevel.
+          </Label>
+        </div>
+      ) : null}
+
+      {action.error ? (
+        <Alert variant="destructive" className="mt-4">
+          <OctagonX aria-hidden />
+          <AlertTitle>Øreavrundingen ble ikke ført</AlertTitle>
+          <AlertDescription>
+            <p className="select-text break-all">{action.error.message}</p>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      <Button disabled={!canBook} onClick={() => setConfirming(true)} className="mt-4 w-full">
+        {action.pending ? (
+          <Spinner className="size-5" />
+        ) : (
+          <CircleCheck className="size-5" aria-hidden />
+        )}
+        Før øreavrunding
+      </Button>
+
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Bokfør øreavrunding i Fiken?</AlertDialogTitle>
+            <AlertDialogDescription>
+              En fri postering på {amount} fra {r.creditAccount} til {r.debitAccount} blir bokført{" "}
+              {formatDay(r.date)} i {companyName}, med bilaget vedlagt. Bokførte bilag kan bare
+              rettes ved å annullere dem i Fiken.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Avbryt</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirming(false)
+                action.onBook()
+              }}
+            >
+              Bokfør
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
   )
 }
 

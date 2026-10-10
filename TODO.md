@@ -40,10 +40,10 @@ Open questions to verify on a Fiken test company (`testCompany: true`, with the 
   - Check that `kind: "supplier"` with `paid: true`, `paymentAccount` and `paymentDate` in one `POST /purchases` gives a purchase that is settled at once (supplier ledger 2400:xxxxx back to 0), not an open payable.
   - Same check for the sale with `customerId` (1500:xxxxx).
 - [ ] **The real Checkin account code.** `1960:10001` in `regnskap.config.json` is a guess. Run `pnpm foring accounts` against the real company and correct `checkinAccount` and `bankAccount`.
-- [ ] **June 1-øre error.** Correct the known 1-øre difference on the Checkin account from June.
-  - Book it once, by hand, as a fri postering against a rounding account (ask the accountant which one).
-  - Try it in the test company first.
-  - Afterwards, check that "Saldo etter føring" is exact for the next month. Before the correction, that check is 1 øre off; it allows up to 1 kr.
+- [ ] **Øreavrunding on old months (incl. the June 1-øre error).** `check` now offers a fri postering against `reconcile.roundingAccount` (default 7740) for months booked with Fiken's VAT, see docs/foring.md "Rette eldre måneder".
+  - Confirm 7740 with the accountant.
+  - Try it in the test company first. Check that journal entry lines come back with the account codes we post (`1960:10001`, `7740`); a rounded month is only detected that way.
+  - Run `check` on each old month, then check that "Saldo" is exact for the latest one. Before the corrections it is a few øre off; it allows up to 1 kr.
 
 ## Findings (public docs, October 2026)
 

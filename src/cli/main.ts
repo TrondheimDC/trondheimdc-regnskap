@@ -10,6 +10,7 @@ import {
   auditBooked,
   book,
   bookable,
+  bookRounding,
   type Existing,
   findReportDocument,
   inspectFiken,
@@ -26,7 +27,7 @@ import { parseAmountsArg, parseReportPdf } from "../lib/checkin.ts"
 import { type Config, Month, parseConfig } from "../lib/config.ts"
 import { Fiken, type InboxDocument } from "../lib/fiken.ts"
 import { formatMonthNo, formatNok } from "../lib/plan.ts"
-import { type Check, explainRounding } from "../lib/verify.ts"
+import { type Check, explainRounding, isRoundingCheck } from "../lib/verify.ts"
 import { createAuth, hasCredentials, login, logout } from "./auth.ts"
 
 const HELP = `Usage: pnpm foring <command> [options]
@@ -36,8 +37,10 @@ Commands:
                       a fri postering (Checkin account -> bank) per payout.
                       Without a file the PDF is fetched from the Fiken inbox.
   check [file.pdf]    Check a month that is already booked against its regnskapsbilag:
-                      sale, purchase and payouts in Fiken. Never writes.
-                      Without a file, give --month or --inbox-doc (used documents too).
+                      sale, purchase and payouts in Fiken. Without a file, give --month
+                      or --inbox-doc (used documents too). If the month was booked with
+                      Fiken's VAT and the Checkin account is a few øre off, --mode create
+                      books an øreavrunding fri postering (after confirmation).
   companies           List Fiken companies the token can access
   accounts            List bank accounts in Fiken (to find account codes)
   inbox               List unused documents in the Fiken inbox
@@ -473,9 +476,53 @@ async function check() {
   console.log(
     `\nKontroller (${config.checkinAccount}: ${formatNok(audit.checkin.start)} → ${formatNok(audit.checkin.end)} i Fiken)`,
   )
-  const ok = printChecks([...prepared.checks, ...audit.checks])
-  console.log(ok ? "\nAlt stemmer." : "\nNoe avviker, se ✗ over. Rett det i Fiken.")
-  if (!ok) process.exitCode = 1
+  const checks = [...prepared.checks, ...audit.checks]
+  const ok = printChecks(checks)
+  const r = audit.rounding
+  if (!r) {
+    console.log(ok ? "\nAlt stemmer." : "\nNoe avviker, se ✗ over. Rett det i Fiken.")
+    if (!ok) process.exitCode = 1
+    return
+  }
+
+  console.log("\nØreavrunding")
+  console.log(
+    "  Måneden er ført med netto fra Checkin og mva regnet av Fiken. Checkin regner mva per billett,",
+  )
+  console.log(
+    "  så summen inkl. mva avviker med noen øre. En fri postering retter Checkin-kontoen:",
+  )
+  console.log(
+    `  ${r.date}  ${formatNok(Math.abs(r.amount))}  debet ${r.debitAccount}, kredit ${r.creditAccount}`,
+  )
+  console.log(`  «${r.description}»`)
+  if (mode === "dry-run") {
+    console.log("\nDry run: ingenting er skrevet til Fiken. Bruk --mode create for å føre den.")
+    process.exitCode = 1
+    return
+  }
+
+  // The rounding itself is one of the failed checks; anything else failing needs a "ja".
+  const othersOk = checks.every((c) => c.ok || isRoundingCheck(c))
+  const what = `${mode === "draft" ? "Lag åpen fri postering for" : "Bokfør"} øreavrundingen i Fiken`
+  if (!(await confirm(what, othersOk))) {
+    console.log("Avbrutt, ingenting er skrevet til Fiken.")
+    process.exitCode = 1
+    return
+  }
+  console.log("")
+  const result = await bookRounding(client, config, prepared, audit, mode, step)
+  if (result.balance) {
+    const { actual, expected } = result.balance
+    if (actual === expected)
+      step(`Saldo ${config.checkinAccount} per ${r.date}: ${formatNok(actual)}`)
+    else
+      warn(
+        `Saldo ${config.checkinAccount} per ${r.date} er ${formatNok(actual)}, forventet ${formatNok(expected)}. Sjekk føringen i Fiken.`,
+      )
+  }
+  console.log(othersOk ? "\nFerdig." : "\nFerdig. Andre avvik står igjen, se ✗ over.")
+  if (!othersOk) process.exitCode = 1
 }
 
 async function main() {

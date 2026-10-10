@@ -85,6 +85,8 @@ export const Config = z
         balanceAccounts: z.array(CheckinAccount).optional(),
         /** Book the gross Checkin charged (VAT ≤ 1 kr from 25 %) and derive the net from it, so the Checkin account matches to the øre. */
         useCheckinVat: z.boolean().default(true),
+        /** Account for øreavrunding on months booked before useCheckinVat (Checkin's net, Fiken's VAT). */
+        roundingAccount: AccountCode.default("7740"),
         /** Checkin's VAT accounts per VAT type, used to cross-check our VAT. */
         outputVat: z.partialRecord(VatType, CheckinAccount).default({ HIGH: "2701" }),
         inputVat: z.partialRecord(VatType, CheckinAccount).default({ HIGH: "2711" }),

@@ -7,6 +7,7 @@ import {
   auditBooked,
   book,
   bookable,
+  bookRounding,
   type FikenState,
   findBooked,
   findReportDocument,
@@ -28,7 +29,7 @@ import type {
   SaleRequest,
   SaleResult,
 } from "../src/lib/fiken.ts"
-import { reconcile } from "../src/lib/verify.ts"
+import { reconcile, roundingCorrection, roundingDrift } from "../src/lib/verify.ts"
 import { MARCH_2026 } from "./pdf-fixture.ts"
 
 const recipe = Config.parse(
@@ -735,6 +736,118 @@ test("findReportDocument never picks a document for another month", async () => 
     (await findReportDocument(client([doc(3, "Regnskapsbilag")]), "Regnskapsbilag", "2026-09"))
       .match?.documentId,
   ).toBe(3)
+})
+
+describe("øreavrunding on a month booked with Fiken's VAT", () => {
+  // Before useCheckinVat: Checkin's net with 25 % from Fiken. The fixture's fees have 308,65 VAT
+  // at Checkin and 308,60 from Fiken, so the purchase is 5 øre short and 1960 is 5 øre high.
+  const oldWay = Config.parse({
+    ...config,
+    reconcile: { ...config.reconcile, useCheckinVat: false },
+  })
+
+  async function bookedOldWay(fake: FakeFiken) {
+    const old = await prepared(oldWay)
+    const state = await inspectFiken(fake.client, oldWay, old, { attach: true })
+    await book(fake.client, oldWay, old, state, "create", ALL)
+    expect(fake.purchases[0]!.lines.reduce((s, l) => s + (l.netPrice ?? 0) + (l.vat ?? 0), 0)).toBe(
+      PURCHASE_GROSS - 5,
+    )
+    return prepared()
+  }
+
+  test("the audit finds the drift and offers a fri postering against 7740", async () => {
+    const fake = new FakeFiken()
+    const p = await bookedOldWay(fake)
+    const audit = await auditBooked(fake.client, config, p)
+    expect(audit.checks.filter((c) => !c.ok).map((c) => [c.label, c.expected - c.actual])).toEqual([
+      ["Salg − kjøp inkl. mva i Fiken mot bilaget", 5],
+    ])
+    expect(audit.rounding).toMatchObject({
+      month: "2026-03",
+      date: "2026-03-31",
+      amount: -5,
+      debitAccount: "7740",
+      creditAccount: CHECKIN,
+      rounded: 0,
+    })
+  })
+
+  test("booking it evens out the month, and it is not offered again", async () => {
+    const fake = new FakeFiken()
+    const p = await bookedOldWay(fake)
+    const audit = await auditBooked(fake.client, config, p)
+    const result = await bookRounding(fake.client, config, p, audit, "create")
+    expect(fake.written("journalEntry").at(-1)?.body).toMatchObject({
+      open: false,
+      journalEntries: [
+        {
+          date: "2026-03-31",
+          lines: [{ amount: 5, debitAccount: "7740", creditAccount: CHECKIN }],
+        },
+      ],
+    })
+    expect(fake.writes.at(-1)?.kind).toBe("attach:journalEntry")
+    expect(result.balance).toEqual({ actual: HELD_AFTER, expected: HELD_AFTER })
+
+    const after = await auditBooked(fake.client, config, p)
+    expect(after.rounding).toBeUndefined()
+    expect(after.checks.filter((c) => !c.ok)).toEqual([])
+    expect(after.checks.map((c) => c.label)).toContain(
+      "Salg − kjøp inkl. mva og øreavrunding i Fiken mot bilaget",
+    )
+    const writes = fake.writes.length
+    await expect(bookRounding(fake.client, config, p, after, "create")).rejects.toThrow(/ingen/)
+    expect(fake.writes).toHaveLength(writes)
+  })
+
+  test("refuses when a rounding entry appeared in Fiken after the audit", async () => {
+    const fake = new FakeFiken()
+    const p = await bookedOldWay(fake)
+    const audit = await auditBooked(fake.client, config, p)
+    fake.journalEntries.push({
+      journalEntryId: 999,
+      description: "Øreavrunding juni, ført for hånd",
+      date: "2026-03-31",
+      lines: [
+        { account: "7740", amount: 5 },
+        { account: CHECKIN, amount: -5 },
+      ],
+    })
+    const writes = fake.writes.length
+    await expect(bookRounding(fake.client, config, p, audit, "create")).rejects.toThrow(/endret/)
+    expect(fake.writes).toHaveLength(writes)
+  })
+
+  test("a month booked with Checkin's gross needs no rounding", async () => {
+    const fake = new FakeFiken()
+    const p = await prepared()
+    await book(fake.client, config, p, await inspect(fake, p), "create", ALL)
+    const audit = await auditBooked(fake.client, config, p)
+    expect(audit.rounding).toBeUndefined()
+    expect(audit.checks.filter((c) => !c.ok)).toEqual([])
+  })
+
+  test("a difference bigger than rounding is left to the line checks", async () => {
+    const fake = new FakeFiken()
+    const p = await bookedOldWay(fake)
+    fake.purchases[0]!.deleted = true
+    const audit = await auditBooked(fake.client, config, p)
+    expect(audit.rounding).toBeUndefined()
+    expect(audit.checks.some((c) => c.label.startsWith("Salg − kjøp"))).toBe(false)
+  })
+})
+
+test("roundingCorrection: too little in Fiken moves the øre into the Checkin account", () => {
+  const plan = { month: "2026-04", date: "2026-04-30", expectedPayout: 1000 } as Prepared["plan"]
+  const accounts = { checkinAccount: CHECKIN, roundingAccount: "7740" }
+  expect(
+    roundingCorrection(plan, roundingDrift(plan, { sale: 1500, purchase: 503 }, 0), accounts),
+  ).toMatchObject({ amount: 3, debitAccount: CHECKIN, creditAccount: "7740" })
+  // Corrected by hand already: nothing left.
+  expect(
+    roundingCorrection(plan, roundingDrift(plan, { sale: 1500, purchase: 503 }, 3), accounts),
+  ).toBeUndefined()
 })
 
 describe("pickCompany", () => {
