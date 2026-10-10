@@ -21,6 +21,8 @@ export interface Check {
   hint?: string
   /** A passing check with something worth a look, e.g. an unusual mva type. Shown, but never blocks. */
   note?: string
+  /** Shown even when it passes: the Checkin account in Fiken against what Checkin holds for us. */
+  pinned?: boolean
 }
 
 const VAT_LABELS: Record<string, string> = {
@@ -153,6 +155,8 @@ export function reconcile(
         actual: held,
         ok: Math.abs(after - held) <= TOLERANCE_ORE,
         source: "Fiken etter føring",
+        hint: "Saldoen i Fiken blir ikke lik det Checkin har til gode for oss. Avviket kan stamme fra en tidligere måned.",
+        pinned: true,
       })
     }
   }
@@ -416,6 +420,7 @@ export function reconcileBooked(
         ok: Math.abs(fiken.end - held) <= TOLERANCE_ORE,
         source: "Fiken",
         hint: "Saldoen i Fiken stemmer ikke med det Checkin har til gode for oss. Avviket kan stamme fra en tidligere måned.",
+        pinned: true,
       })
     }
   }

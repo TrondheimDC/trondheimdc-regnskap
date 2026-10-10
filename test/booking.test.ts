@@ -301,6 +301,8 @@ describe("reconcile with new fri posteringer", () => {
       [true, 5000000, 5000000],
       [true, HELD_AFTER, HELD_AFTER],
     ])
+    // The saldo against Checkin 1500+1921 stays in view even when it passes.
+    expect(checks.map((c) => c.pinned ?? false)).toEqual([false, true])
   })
 
   test("one payout already in Fiken, the other booked now", async () => {

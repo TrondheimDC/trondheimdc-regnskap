@@ -18,7 +18,7 @@ import {
   RefreshCw,
   TriangleAlert,
 } from "lucide-react"
-import { type ReactNode, useMemo, useState } from "react"
+import { type ComponentProps, type ReactNode, useMemo, useState } from "react"
 import { toast } from "sonner"
 import {
   hoverProps,
@@ -29,7 +29,6 @@ import {
   useMarksFor,
 } from "@/components/marks"
 import { PdfPreview } from "@/components/pdf-preview"
-import { TdcLogo } from "@/components/tdc-logo"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -153,16 +152,18 @@ function Card({
   aside,
   className,
   children,
-}: {
+  ...props
+}: Omit<ComponentProps<"section">, "title"> & {
   icon: ReactNode
   title: ReactNode
   subtitle?: ReactNode
   aside?: ReactNode
-  className?: string
-  children?: ReactNode
 }) {
   return (
-    <section className={cn("rounded-xl bg-[var(--color-bg-surface)] p-4 sm:p-5", className)}>
+    <section
+      {...props}
+      className={cn("rounded-xl bg-[var(--color-bg-surface)] p-4 sm:p-5", className)}
+    >
       <header className="flex items-start gap-3">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-fg-brand)]/15 text-[var(--color-fg-brand)] [&_svg]:size-[1.125rem]">
           {icon}
@@ -256,29 +257,33 @@ export function ReviewScreen({
   return (
     <main className="attendee-reveal mx-auto flex min-h-dvh w-full max-w-7xl flex-col gap-6 p-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:p-6 lg:px-8">
       <header className="shrink-0 pt-2">
-        <div className="flex items-center justify-between">
-          <TdcLogo />
-          <div className="flex items-center gap-1">
-            {bookingStarted ? null : (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={refresh}
-                disabled={analysis.isFetching}
-                className="text-[var(--color-fg-base)]/70"
-              >
-                <RefreshCw
-                  className={cn("size-4", analysis.isFetching && "animate-spin")}
-                  aria-hidden
-                />
-                Oppdater
-              </Button>
-            )}
-            <Button variant="ghost" size="sm" onClick={onBack} disabled={booking.isPending}>
-              <ArrowLeft className="size-4" aria-hidden />
-              Tilbake
+        <div className="flex min-h-9 items-center justify-between gap-3">
+          {/* -ml-3 lines the arrow up with the title below. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onBack}
+            disabled={booking.isPending}
+            className="-ml-3"
+          >
+            <ArrowLeft className="size-4" aria-hidden />
+            Tilbake
+          </Button>
+          {bookingStarted ? null : (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={refresh}
+              disabled={analysis.isFetching}
+              className="-mr-3 text-[var(--color-fg-base)]/70"
+            >
+              <RefreshCw
+                className={cn("size-4", analysis.isFetching && "animate-spin")}
+                aria-hidden
+              />
+              Oppdater
             </Button>
-          </div>
+          )}
         </div>
         <h1 className="mt-2 text-4xl">{title}</h1>
         {analysis.data?.audit ? (
@@ -724,7 +729,7 @@ function AuditReview({
               </span>
             }
           >
-            Utbetalinger
+            Utbetalinger i Fiken
           </SectionLabel>
           {audit.transfers.map((t) => (
             <TransferCard key={t.voucher} transfer={t} audit />
@@ -1047,56 +1052,42 @@ function SideLine({ side, line }: { side: "sale" | "purchase"; line: OrderLine }
   )
 }
 
+/**
+ * A payout as a fri postering from the Checkin account to the bank. Same look as the sale and
+ * purchase: one in Fiken is a full card with a badge, one missing from a booked month is muted.
+ */
 function TransferCard({ transfer: t, audit = false }: { transfer: Transfer; audit?: boolean }) {
   const [mark] = useMarksFor([payoutKey(t.voucher)])
   const { active, setActive } = useMarks()
   const on = mark !== undefined && active.includes(mark.n)
   return (
-    <section
+    <Card
       {...hoverProps(setActive, mark ? [mark.n] : [])}
+      icon={<ArrowRightLeft />}
+      title={`Utbetaling ${formatDay(t.date)}`}
+      subtitle={`Checkin-bilag ${t.voucher}`}
+      aside={
+        <MarkedAmount marks={mark ? [mark] : []} className="font-display text-xl leading-tight">
+          {formatNok(t.amount)}
+        </MarkedAmount>
+      }
       className={cn(
-        "rounded-xl bg-[var(--color-bg-surface)] p-4 transition-colors duration-150 sm:p-5",
-        t.existing && "bg-[var(--color-bg-surface)]/50",
+        "transition-colors duration-150",
+        audit && !t.existing && "bg-[var(--color-bg-surface)]/50",
         on && "bg-[color-mix(in_srgb,var(--color-bg-surface)_88%,var(--color-white-1))]",
       )}
     >
-      <header className="flex items-start gap-3">
-        <span
-          className={cn(
-            "flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-fg-brand)]/15 text-[var(--color-fg-brand)]",
-            t.existing && "bg-white/5 text-[var(--color-fg-base)]/50",
-          )}
-        >
-          <ArrowRightLeft className="size-[1.125rem]" aria-hidden />
-        </span>
-        <div className={cn("min-w-0 flex-1", t.existing && "opacity-60")}>
-          <h3 className="font-semibold leading-snug">{formatDay(t.date)}</h3>
-          <p className="text-sm text-[var(--color-fg-base)]/60">Checkin-bilag {t.voucher}</p>
-        </div>
-        <MarkedAmount
-          marks={mark ? [mark] : []}
-          className={cn(
-            "font-display text-lg leading-snug",
-            t.existing && "[&>.tabular]:opacity-60",
-          )}
-        >
-          {formatNok(t.amount)}
-        </MarkedAmount>
-      </header>
-
-      <div
-        className={cn("mt-3 flex flex-wrap items-center gap-2 text-sm", t.existing && "opacity-60")}
-      >
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
         <AccountChip code={config.checkinAccount} name="Checkin" />
         <ArrowRight className="size-4 shrink-0 text-[var(--color-fg-base)]/50" aria-label="til" />
         <AccountChip code={config.bankAccount} name="Bank" />
       </div>
 
       {t.existing ? (
-        <div className="mt-3 flex flex-col gap-1.5">
+        <div className="mt-3 flex flex-col items-start gap-1.5">
           <Badge variant="secondary" className="text-[var(--color-fg-base)]/80">
             <CircleCheck aria-hidden />
-            {audit ? "Ført i Fiken" : "Allerede ført"}
+            {audit ? "Ført i Fiken" : "Allerede ført i Fiken"}
           </Badge>
           {t.existing.description ? (
             <p className="text-xs text-[var(--color-fg-base)]/50">
@@ -1112,7 +1103,7 @@ function TransferCard({ transfer: t, audit = false }: { transfer: Transfer; audi
       ) : (
         <p className="mt-3 text-xs text-[var(--color-fg-base)]/50">«{t.description}»</p>
       )}
-    </section>
+    </Card>
   )
 }
 
@@ -1135,9 +1126,10 @@ function ChecksCard({
   subtitle?: string
 }) {
   const failed = checks.filter((c) => !c.ok).length
-  // Deviations first, then passing checks with a note; both stay in view. The rest fold away.
-  const shown = checks.filter((c) => !c.ok || c.note)
-  const notes = shown.length - failed
+  // Deviations first, then passing checks with a note or pinned (the Checkin saldo); these stay
+  // in view. The rest fold away.
+  const shown = checks.filter((c) => !c.ok || c.note || c.pinned)
+  const notes = checks.filter((c) => c.ok && c.note).length
   const figures = checkKeys(config)
   const marks = useMarksFor(figures.map((f) => f.key))
   return (
@@ -1195,7 +1187,7 @@ function ChecksCard({
             </summary>
             <ul className="mt-3 flex flex-col gap-3">
               {checks
-                .filter((c) => c.ok && !c.note)
+                .filter((c) => !shown.includes(c))
                 .map((c) => (
                   <CheckRow key={c.label} check={c} />
                 ))}
