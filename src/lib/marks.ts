@@ -4,6 +4,7 @@ import type { Prepared } from "./booking.ts"
 import type { Box } from "./checkin.ts"
 import type { Config } from "./config.ts"
 import type { VatType } from "./fiken.ts"
+import { type BookedLine, effectiveVatType } from "./verify.ts"
 
 export type MarkKind = "sale" | "purchase" | "vat" | "payout" | "check" | "ignored"
 
@@ -39,6 +40,25 @@ export const vatKey = (config: Config, side: "sale" | "purchase", vatType: VatTy
     vatType
   ]
   return account ? `balance:${account}` : undefined
+}
+
+/**
+ * Box keys for a line as booked in Fiken: those of the bilag line with the same account and VAT
+ * type, the way the audit pairs them. None if the line has no match in the bilag.
+ */
+export function bookedLineKeys(
+  config: Config,
+  plan: Prepared["plan"],
+  side: "sale" | "purchase",
+  line: BookedLine,
+) {
+  const vatType = effectiveVatType(line)
+  const match = plan[side].lines.find((l) => l.account === line.account && l.vatType === vatType)
+  if (!match) return { net: [], vat: undefined }
+  return {
+    net: lineKeys(config, side, match.description),
+    vat: line.vat ? vatKey(config, side, match.vatType) : undefined,
+  }
 }
 
 export const payoutKey = (voucher: string) => `payout:${voucher}`

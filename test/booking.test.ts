@@ -29,6 +29,7 @@ import type {
   SaleRequest,
   SaleResult,
 } from "../src/lib/fiken.ts"
+import { bookedLineKeys } from "../src/lib/marks.ts"
 import { reconcile, roundingCorrection, roundingDrift } from "../src/lib/verify.ts"
 import { MARCH_2026 } from "./pdf-fixture.ts"
 
@@ -772,6 +773,27 @@ test("findReportDocument never picks a document for another month", async () => 
     (await findReportDocument(client([doc(3, "Regnskapsbilag")]), "Regnskapsbilag", "2026-09"))
       .match?.documentId,
   ).toBe(3)
+})
+
+describe("bookedLineKeys", () => {
+  test("pairs a booked line with the bilag line by account and VAT type", async () => {
+    const { plan } = await prepared()
+    const keys = (line: { account: string; vatType: string; vat: number }) =>
+      bookedLineKeys(config, plan, "purchase", { ...line, netPrice: 100 })
+    expect(keys({ account: "4300", vatType: "HIGH", vat: 25 })).toEqual({
+      net: ["result:4300"],
+      vat: "balance:2711",
+    })
+    // HIGH_BASIS puts no VAT on the line, so it is the no-VAT transaction fee.
+    expect(keys({ account: "4300", vatType: "HIGH_BASIS", vat: 0 })).toEqual({
+      net: ["result:4335"],
+      vat: undefined,
+    })
+    expect(keys({ account: "6800", vatType: "HIGH", vat: 25 })).toEqual({
+      net: [],
+      vat: undefined,
+    })
+  })
 })
 
 describe("øreavrunding on a month booked with Fiken's VAT", () => {

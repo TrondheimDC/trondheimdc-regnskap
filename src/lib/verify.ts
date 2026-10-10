@@ -295,6 +295,10 @@ export interface BookedLine {
 /** The rates we book with. Any other type with no VAT on the line counts as "NONE". */
 const RATED = new Set(["HIGH", "MEDIUM", "LOW"])
 
+/** E.g. HIGH_BASIS puts no VAT on the line, same as NONE; only the mva-melding differs. */
+export const effectiveVatType = (l: { vatType: string; vat?: number }) =>
+  RATED.has(l.vatType) || l.vat ? l.vatType : "NONE"
+
 function byAccountAndVat(
   lines: { account: string; vatType: string; netPrice: number; vat?: number }[],
 ) {
@@ -303,8 +307,7 @@ function byAccountAndVat(
     { account: string; vatType: string; types: Set<string>; net: number; vat: number }
   >()
   for (const l of lines) {
-    // E.g. HIGH_BASIS puts no VAT on the line, same as NONE; only the mva-melding differs.
-    const vatType = RATED.has(l.vatType) || l.vat ? l.vatType : "NONE"
+    const vatType = effectiveVatType(l)
     const key = `${l.account} ${vatType}`
     const g = groups.get(key) ?? { account: l.account, vatType, types: new Set(), net: 0, vat: 0 }
     g.types.add(l.vatType)

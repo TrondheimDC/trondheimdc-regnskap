@@ -73,12 +73,42 @@ export function MarkProvider({
  * Pointer props that emphasise `marks` while a mouse or pen hovers. Touch is left out: it fires
  * pointerleave right after a tap, which would undo the tap's emphasis.
  */
-export function hoverProps(setActive: (marks: number[]) => void, marks: number[]) {
+export function hoverProps(
+  setActive: (marks: number[]) => void,
+  marks: number[],
+  outer: number[] = [],
+) {
   if (marks.length === 0) return {}
   return {
     onPointerEnter: (e: React.PointerEvent) => e.pointerType !== "touch" && setActive(marks),
-    onPointerLeave: (e: React.PointerEvent) => e.pointerType !== "touch" && setActive([]),
+    onPointerLeave: (e: React.PointerEvent) => e.pointerType !== "touch" && setActive(outer),
   }
+}
+
+/** Marks of the hover area around this one. Leaving a row inside a card falls back to the card. */
+const HoverScope = createContext<number[]>([])
+
+/**
+ * A hover area for `marks`, e.g. a whole card: emphasises them on the PDF while hovered. A card is
+ * `on` while any of its marks is; a row only while nothing outside it is, so hovering the card
+ * doesn't light up every row in it. Wrap the children in `MarkScope` with `scope`.
+ */
+export function useMarkArea(marks: Mark[], kind: "card" | "row" = "card") {
+  const { active, setActive } = useMarks()
+  const outer = useContext(HoverScope)
+  const ns = marks.map((m) => m.n)
+  return {
+    on:
+      kind === "card"
+        ? ns.some((n) => active.includes(n))
+        : active.length > 0 && active.every((n) => ns.includes(n)),
+    props: hoverProps(setActive, ns, outer),
+    scope: ns.length > 0 ? ns : outer,
+  }
+}
+
+export function MarkScope({ marks, children }: { marks: number[]; children: ReactNode }) {
+  return <HoverScope.Provider value={marks}>{children}</HoverScope.Provider>
 }
 
 export function useMarks() {
@@ -96,13 +126,14 @@ export function useMarksFor(keys: (string | undefined)[]): Mark[] {
 /** Round number badge in the mark's colour; hover/focus emphasises the highlight on the PDF. */
 export function MarkBadge({ mark, className }: { mark: Mark; className?: string }) {
   const { active, setActive, reveal } = useMarks()
+  const outer = useContext(HoverScope)
   const on = active.includes(mark.n)
   return (
     <button
       type="button"
       aria-label={`Vis ${mark.n} i bilaget: ${mark.label}, ${formatNok(mark.amount)}`}
       title={`${mark.label}: ${formatNok(mark.amount)} i bilaget`}
-      {...hoverProps(setActive, [mark.n])}
+      {...hoverProps(setActive, [mark.n], outer)}
       onFocus={() => setActive([mark.n])}
       onBlur={() => setActive([])}
       onClick={() => reveal(mark.n)}
@@ -140,21 +171,17 @@ export function MarkRow({
   className?: string
   children: ReactNode
 }) {
-  const { active, setActive } = useMarks()
-  const on = marks.length > 0 && marks.some((m) => active.includes(m.n))
+  const { on, props, scope } = useMarkArea(marks, "row")
   return (
     <li
-      {...hoverProps(
-        setActive,
-        marks.map((m) => m.n),
-      )}
+      {...props}
       className={cn(
         "-mx-2 rounded-lg px-2 py-1.5 transition-colors duration-150",
         on && "bg-white/[0.06]",
         className,
       )}
     >
-      {children}
+      <MarkScope marks={scope}>{children}</MarkScope>
     </li>
   )
 }

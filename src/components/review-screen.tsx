@@ -21,10 +21,11 @@ import {
 import { type ComponentProps, type ReactNode, useMemo, useState } from "react"
 import { toast } from "sonner"
 import {
-  hoverProps,
   MarkedAmount,
   MarkProvider,
   MarkRow,
+  MarkScope,
+  useMarkArea,
   useMarks,
   useMarksFor,
 } from "@/components/marks"
@@ -69,7 +70,15 @@ import {
 import { parseReportPdf } from "@/lib/checkin"
 import type { Fiken, OrderLine } from "@/lib/fiken"
 import { formatDay, formatMonth } from "@/lib/format"
-import { buildMarks, checkKeys, lineKeys, payoutKey, vatKey } from "@/lib/marks"
+import {
+  bookedLineKeys,
+  buildMarks,
+  checkKeys,
+  lineKeys,
+  type Mark,
+  payoutKey,
+  vatKey,
+} from "@/lib/marks"
 import { renderPdfPage } from "@/lib/pdf-render"
 import { formatNok } from "@/lib/plan"
 import { cn } from "@/lib/utils"
@@ -145,11 +154,16 @@ function SectionLabel({ children, aside }: { children: ReactNode; aside?: ReactN
   )
 }
 
+/**
+ * A card on the review screen. With `marks` (a sale, purchase or payout), hovering the card
+ * emphasises all its numbers on the PDF; a line inside narrows it to its own.
+ */
 function Card({
   icon,
   title,
   subtitle,
   aside,
+  marks = [],
   className,
   children,
   ...props
@@ -158,25 +172,34 @@ function Card({
   title: ReactNode
   subtitle?: ReactNode
   aside?: ReactNode
+  marks?: Mark[]
 }) {
+  const { on, props: hover, scope } = useMarkArea(marks)
   return (
     <section
       {...props}
-      className={cn("rounded-xl bg-[var(--color-bg-surface)] p-4 sm:p-5", className)}
+      {...hover}
+      className={cn(
+        "rounded-xl bg-[var(--color-bg-surface)] p-4 transition-colors duration-150 sm:p-5",
+        className,
+        on && "bg-[color-mix(in_srgb,var(--color-bg-surface)_88%,var(--color-white-1))]",
+      )}
     >
-      <header className="flex items-start gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-fg-brand)]/15 text-[var(--color-fg-brand)] [&_svg]:size-[1.125rem]">
-          {icon}
-        </span>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-xl leading-tight">{title}</h2>
-          {subtitle ? (
-            <p className="mt-0.5 text-sm text-[var(--color-fg-base)]/60">{subtitle}</p>
-          ) : null}
-        </div>
-        {aside}
-      </header>
-      {children}
+      <MarkScope marks={scope}>
+        <header className="flex items-start gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-fg-brand)]/15 text-[var(--color-fg-brand)] [&_svg]:size-[1.125rem]">
+            {icon}
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-xl leading-tight">{title}</h2>
+            {subtitle ? (
+              <p className="mt-0.5 text-sm text-[var(--color-fg-base)]/60">{subtitle}</p>
+            ) : null}
+          </div>
+          {aside}
+        </header>
+        {children}
+      </MarkScope>
     </section>
   )
 }
@@ -715,8 +738,10 @@ function AuditReview({
         <SectionLabel>Salg og kjøp i Fiken</SectionLabel>
         {sides.flatMap(({ side, vouchers }) =>
           vouchers.length > 0
-            ? vouchers.map((v) => <BookedCard key={`${side}-${v.id}`} side={side} voucher={v} />)
-            : [<BookedCard key={side} side={side} />],
+            ? vouchers.map((v) => (
+                <BookedCard key={`${side}-${v.id}`} side={side} voucher={v} plan={prepared.plan} />
+              ))
+            : [<BookedCard key={side} side={side} plan={prepared.plan} />],
         )}
       </div>
 
@@ -860,10 +885,27 @@ function RoundingCard({
   )
 }
 
-function BookedCard({ side, voucher }: { side: "sale" | "purchase"; voucher?: BookedVoucher }) {
+function BookedCard({
+  side,
+  voucher,
+  plan,
+}: {
+  side: "sale" | "purchase"
+  voucher?: BookedVoucher
+  plan: Prepared["plan"]
+}) {
   const name = side === "sale" ? "Salg" : "Kjøp"
+  const marks = useMarksFor([
+    ...new Set(
+      (voucher?.lines ?? []).flatMap((l) => {
+        const { net, vat } = bookedLineKeys(config, plan, side, l)
+        return [...net, vat]
+      }),
+    ),
+  ])
   return (
     <Card
+      marks={marks}
       icon={side === "sale" ? <Landmark /> : <ReceiptText />}
       title={voucher?.number ? `${name} «${voucher.number}»` : name}
       subtitle={
@@ -885,28 +927,14 @@ function BookedCard({ side, voucher }: { side: "sale" | "purchase"; voucher?: Bo
     >
       {voucher ? (
         <>
-          <ul className="mt-4 flex flex-col gap-2">
+          <ul className="mt-4 flex flex-col gap-1">
             {voucher.lines.map((l, i) => (
-              <li
+              <BookedLine
                 // biome-ignore lint/suspicious/noArrayIndexKey: order is fixed for a booked voucher
                 key={i}
-                className="flex items-start justify-between gap-3"
-              >
-                <span className="min-w-0">
-                  <span className="block font-semibold">{l.description ?? "Uten tekst"}</span>
-                  <span className="block text-sm text-[var(--color-fg-base)]/60">
-                    Konto {l.account} · {vatLabel(l.vatType)}
-                  </span>
-                </span>
-                <span className="flex shrink-0 flex-col items-end gap-1">
-                  <span className="tabular">{formatNok(l.netPrice)}</span>
-                  {l.vat ? (
-                    <span className="tabular text-sm text-[var(--color-fg-base)]/70">
-                      mva {formatNok(l.vat)}
-                    </span>
-                  ) : null}
-                </span>
-              </li>
+                line={l}
+                keys={bookedLineKeys(config, plan, side, l)}
+              />
             ))}
           </ul>
           <div className="mt-3 flex items-baseline justify-between gap-3 border-t border-white/10 pt-3">
@@ -917,6 +945,18 @@ function BookedCard({ side, voucher }: { side: "sale" | "purchase"; voucher?: Bo
       ) : null}
     </Card>
   )
+}
+
+function BookedLine({
+  line,
+  keys,
+}: {
+  line: BookedVoucher["lines"][number]
+  keys: ReturnType<typeof bookedLineKeys>
+}) {
+  const net = useMarksFor(keys.net)
+  const vat = useMarksFor([keys.vat])
+  return <LineRow line={line} net={net} vat={vat} />
 }
 
 function Totals({
@@ -985,9 +1025,18 @@ function SideCard({
   const contact = side === "sale" ? fiken.customer : fiken.supplier
   const notes = adjusted.filter((r) => r.side === side)
   const existing = fiken.existing[side]
+  const marks = useMarksFor([
+    ...new Set(
+      lines.flatMap((l) => [
+        ...lineKeys(config, side, l.description),
+        l.vat ? vatKey(config, side, l.vatType) : undefined,
+      ]),
+    ),
+  ])
 
   return (
     <Card
+      marks={marks}
       icon={side === "sale" ? <Landmark /> : <ReceiptText />}
       title={side === "sale" ? "Salg" : "Kjøp"}
       subtitle={[
@@ -1030,11 +1079,24 @@ function SideCard({
 function SideLine({ side, line }: { side: "sale" | "purchase"; line: OrderLine }) {
   const net = useMarksFor(lineKeys(config, side, line.description))
   const vat = useMarksFor(line.vat ? [vatKey(config, side, line.vatType)] : [])
+  return <LineRow line={line} net={net} vat={vat} />
+}
+
+/** A line of a sale or purchase. Hovering it emphasises its net and VAT on the PDF. */
+function LineRow({
+  line,
+  net,
+  vat,
+}: {
+  line: { description?: string; account: string; vatType: string; netPrice: number; vat?: number }
+  net: Mark[]
+  vat: Mark[]
+}) {
   return (
     <MarkRow marks={[...net, ...vat]}>
       <div className="flex items-start justify-between gap-3">
         <span className="min-w-0">
-          <span className="block font-semibold">{line.description}</span>
+          <span className="block font-semibold">{line.description ?? "Uten tekst"}</span>
           <span className="block text-sm text-[var(--color-fg-base)]/60">
             Konto {line.account} · {vatLabel(line.vatType)}
           </span>
@@ -1057,25 +1119,19 @@ function SideLine({ side, line }: { side: "sale" | "purchase"; line: OrderLine }
  * purchase: one in Fiken is a full card with a badge, one missing from a booked month is muted.
  */
 function TransferCard({ transfer: t, audit = false }: { transfer: Transfer; audit?: boolean }) {
-  const [mark] = useMarksFor([payoutKey(t.voucher)])
-  const { active, setActive } = useMarks()
-  const on = mark !== undefined && active.includes(mark.n)
+  const marks = useMarksFor([payoutKey(t.voucher)])
   return (
     <Card
-      {...hoverProps(setActive, mark ? [mark.n] : [])}
+      marks={marks}
       icon={<ArrowRightLeft />}
       title={`Utbetaling ${formatDay(t.date)}`}
       subtitle={`Checkin-bilag ${t.voucher}`}
       aside={
-        <MarkedAmount marks={mark ? [mark] : []} className="font-display text-xl leading-tight">
+        <MarkedAmount marks={marks} className="font-display text-xl leading-tight">
           {formatNok(t.amount)}
         </MarkedAmount>
       }
-      className={cn(
-        "transition-colors duration-150",
-        audit && !t.existing && "bg-[var(--color-bg-surface)]/50",
-        on && "bg-[color-mix(in_srgb,var(--color-bg-surface)_88%,var(--color-white-1))]",
-      )}
+      className={cn(audit && !t.existing && "bg-[var(--color-bg-surface)]/50")}
     >
       <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
         <AccountChip code={config.checkinAccount} name="Checkin" />
