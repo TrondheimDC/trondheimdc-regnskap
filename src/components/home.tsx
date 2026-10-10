@@ -12,7 +12,8 @@ import {
   RefreshCw,
   Upload,
 } from "lucide-react"
-import { type ReactNode, useState } from "react"
+import { type ReactNode, useMemo, useState } from "react"
+import { ErrorScreen } from "@/components/error-screen"
 import { ReviewScreen, type Selection } from "@/components/review-screen"
 import { TdcLogo } from "@/components/tdc-logo"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -20,8 +21,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { API_BASE, config } from "@/lib/app-config"
-import { listReportDocuments, type ReportDocument, resolveCompany } from "@/lib/booking"
-import { Fiken } from "@/lib/fiken"
+import { listReportDocuments, pickCompany, type ReportDocument } from "@/lib/booking"
+import { type Company, Fiken } from "@/lib/fiken"
 import { browserAuth, isLoggedIn, logout, startLogin } from "@/lib/fiken-browser-auth"
 import { formatDay, formatMonth } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -96,6 +97,9 @@ function SectionLabel({ children, aside }: { children: ReactNode; aside?: ReactN
   )
 }
 
+// The company the user chose, for users with access to several. Not a secret; survives logout.
+const COMPANY_KEY = "regnskap.company"
+
 function Workspace({ onLogout }: { onLogout: () => void }) {
   const [selection, setSelection] = useState<Selection>()
 
@@ -104,10 +108,25 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
     queryFn: async () => {
       const anonymous = new Fiken(browserAuth, "", API_BASE)
       const user = await anonymous.me()
-      const company = await resolveCompany(anonymous, config.companySlug)
-      return { user, company, client: new Fiken(browserAuth, company.slug, API_BASE) }
+      const companies = await anonymous.companies()
+      return { user, companies }
     },
   })
+  const [chosen, setChosen] = useState(() => localStorage.getItem(COMPANY_KEY) ?? undefined)
+  const [choosing, setChoosing] = useState(false)
+  const companies = session.data?.companies
+  const company =
+    companies && !choosing ? pickCompany(companies, [chosen, config.companySlug]) : undefined
+  const client = useMemo(
+    () => (company ? new Fiken(browserAuth, company.slug, API_BASE) : undefined),
+    [company],
+  )
+
+  const choose = (c: Company) => {
+    localStorage.setItem(COMPANY_KEY, c.slug)
+    setChosen(c.slug)
+    setChoosing(false)
+  }
 
   if (session.isError) {
     return (
@@ -124,11 +143,41 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
     )
   }
 
-  if (selection && session.data) {
+  if (companies?.length === 0) {
+    return (
+      <ErrorScreen
+        illustration={
+          <Building2 className="mx-auto size-20 text-[var(--color-fg-brand)]" aria-hidden />
+        }
+        title="Ingen selskaper i Fiken"
+        body="Fiken-brukeren din har ikke tilgang til noen selskaper."
+        actions={
+          <Button onClick={onLogout} className="w-full sm:w-auto">
+            <LogIn className="size-5" aria-hidden />
+            Logg inn på nytt
+          </Button>
+        }
+      />
+    )
+  }
+
+  if (companies && !company) {
+    return (
+      <CompanyPicker
+        companies={companies}
+        current={chosen ?? config.companySlug}
+        onPick={choose}
+        onCancel={choosing ? () => setChoosing(false) : undefined}
+        onLogout={onLogout}
+      />
+    )
+  }
+
+  if (selection && session.data && company && client) {
     return (
       <ReviewScreen
-        client={session.data.client}
-        companyName={session.data.company.name}
+        client={client}
+        companyName={company.name}
         selection={selection}
         onBack={() => setSelection(undefined)}
       />
@@ -142,10 +191,10 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           <Building2 className="size-5" aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          {session.data ? (
+          {session.data && company ? (
             <>
               <p className="text-sm opacity-60">{session.data.user.name}</p>
-              <p className="truncate font-display text-xl">{session.data.company.name}</p>
+              <p className="truncate font-display text-xl">{company.name}</p>
             </>
           ) : (
             <>
@@ -156,6 +205,11 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             </>
           )}
         </div>
+        {companies && companies.length > 1 ? (
+          <Button variant="ghost" size="sm" onClick={() => setChoosing(true)}>
+            Bytt selskap
+          </Button>
+        ) : null}
         <Button
           variant="ghost"
           size="icon-sm"
@@ -167,7 +221,63 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         </Button>
       </div>
 
-      <Picker client={session.data?.client} onPick={setSelection} />
+      <Picker client={client} onPick={setSelection} />
+    </Screen>
+  )
+}
+
+/** For users with access to several Fiken companies (and not the configured one). */
+function CompanyPicker({
+  companies,
+  current,
+  onPick,
+  onCancel,
+  onLogout,
+}: {
+  companies: Company[]
+  current?: string
+  onPick: (c: Company) => void
+  /** Set when switching from the inbox: go back without choosing. */
+  onCancel?: () => void
+  onLogout: () => void
+}) {
+  return (
+    <Screen title="Velg selskap">
+      <SectionLabel>Hvilket selskap skal bilagene føres i?</SectionLabel>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {companies.map((c) => (
+          <Button
+            key={c.slug}
+            variant="surface"
+            onClick={() => onPick(c)}
+            className="h-auto items-center justify-start gap-3 whitespace-normal rounded-xl px-4 py-4 text-left"
+          >
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[var(--color-fg-brand)]/15 text-[var(--color-fg-brand)]">
+              <Building2 className="size-5" aria-hidden />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-display text-xl">{c.name}</span>
+              <span className="block text-sm opacity-60">
+                {c.organizationNumber ? `Org.nr. ${c.organizationNumber}` : c.slug}
+              </span>
+            </span>
+            {c.testCompany ? <Badge variant="outline">Testselskap</Badge> : null}
+            {c.slug === current ? (
+              <Check className="size-5 text-[var(--color-fg-brand)]" aria-hidden />
+            ) : null}
+          </Button>
+        ))}
+      </div>
+      {onCancel ? (
+        <Button variant="ghost" onClick={onCancel} className="sm:self-start">
+          Avbryt
+        </Button>
+      ) : (
+        <Button variant="ghost" onClick={onLogout} className="sm:self-start">
+          <LogOut className="size-4" aria-hidden />
+          Logg ut
+        </Button>
+      )}
     </Screen>
   )
 }

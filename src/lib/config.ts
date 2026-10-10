@@ -55,7 +55,10 @@ const Side = z.object({
 
 export const Config = z
   .object({
-    /** Fiken company slug (see `pnpm foring companies`). Optional if the user only has one company. */
+    /**
+     * Default Fiken company slug (see `pnpm foring companies`), used when the user has access to
+     * it. Otherwise the web app asks, and the CLI needs `--company`.
+     */
     companySlug: z.string().min(1).optional(),
     /** Fiken account code for "Utenlandsk bankkonto / betalingstjeneste Checkin". */
     checkinAccount: AccountCode,

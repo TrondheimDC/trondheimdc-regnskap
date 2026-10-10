@@ -1,5 +1,6 @@
 {
   "$comment": "Oppskriften for føring av Checkin-regnskapsbilag i Fiken. Bygges inn i web-appen; endringer krever ny deploy.",
+  "companySlug": "trondheimdc",
   "checkinAccount": "1960:10001",
   "bankAccount": "1920:10001",
   "sale": {

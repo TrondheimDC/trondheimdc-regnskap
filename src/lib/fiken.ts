@@ -178,6 +178,7 @@ const Company = z.object({
   organizationNumber: z.string().nullish(),
   testCompany: z.boolean().optional(),
 })
+export type Company = z.infer<typeof Company>
 
 const JournalEntry = z.object({
   journalEntryId: z.number(),

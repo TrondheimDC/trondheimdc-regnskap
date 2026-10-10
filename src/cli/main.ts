@@ -18,9 +18,9 @@ import {
   PARTS,
   type Part,
   type Parts,
+  pickCompany,
   prepare,
   type ReportSource,
-  resolveCompany,
 } from "../lib/booking.ts"
 import { parseAmountsArg, parseReportPdf } from "../lib/checkin.ts"
 import { type Config, Month, parseConfig } from "../lib/config.ts"
@@ -54,6 +54,7 @@ Options:
   --inbox-doc <id>    Fiken inbox document to read/attach (default: auto-detect)
   --no-attach         Do not attach any inbox document
   --offline           dry-run: skip all calls to Fiken (needs a file or --amounts)
+  --company <slug>    Fiken company (default: companySlug in the config, if you have access)
   --config <path>     Config file (default: regnskap.config.json)
 
 Login:
@@ -74,6 +75,7 @@ const { values: rawOpts, positionals } = parseArgs({
     "inbox-doc": { type: "string" },
     "no-attach": { type: "boolean", default: false },
     offline: { type: "boolean", default: false },
+    company: { type: "string" },
     config: { type: "string", default: "regnskap.config.json" },
     help: { type: "boolean", short: "h", default: false },
   },
@@ -92,6 +94,7 @@ const Options = z.object({
   "inbox-doc": z.coerce.number().int().positive().optional(),
   "no-attach": z.boolean(),
   offline: z.boolean(),
+  company: z.string().min(1).optional(),
   config: z.string(),
   help: z.boolean(),
 })
@@ -216,8 +219,18 @@ async function fiken(config?: Config): Promise<Fiken> {
   const auth = await createAuth()
   const baseUrl = process.env.FIKEN_API_URL
   if (!config) return new Fiken(auth, "", baseUrl)
-  const { slug } = await resolveCompany(new Fiken(auth, "", baseUrl), config.companySlug)
-  return new Fiken(auth, slug, baseUrl)
+  const companies = await new Fiken(auth, "", baseUrl).companies()
+  const slugs = companies.map((c) => c.slug).join(", ")
+  if (opts.company && !companies.some((c) => c.slug === opts.company))
+    fail(`No access to Fiken company "${opts.company}". Available: ${slugs}`)
+  const company = pickCompany(companies, [opts.company, config.companySlug])
+  if (!company)
+    fail(
+      companies.length === 0
+        ? "The Fiken user has no companies"
+        : `Several Fiken companies; choose one with --company: ${slugs}`,
+    )
+  return new Fiken(auth, company.slug, baseUrl)
 }
 
 /** Finds a Checkin document in the Fiken inbox, by --inbox-doc or by name (and month, if known). */

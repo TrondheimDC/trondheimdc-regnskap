@@ -11,6 +11,7 @@ import type { Movements, ParsedReport } from "./checkin.ts"
 import { monthFromText, toReport } from "./checkin.ts"
 import type { Config, ContactRef } from "./config.ts"
 import type {
+  Company,
   Contact,
   DraftRequest,
   Fiken,
@@ -772,23 +773,17 @@ async function bookTransfers(
 }
 
 /**
- * Picks the Fiken company: the configured slug if the user has access to it, otherwise the
- * user's only company. `client` may be created with an empty slug; only /companies is used.
+ * Picks the Fiken company: the first preferred slug the user has access to (their own choice,
+ * then `companySlug` from the config), otherwise the user's only company. Undefined means the
+ * user has to choose.
  */
-export async function resolveCompany(
-  client: Fiken,
-  configured?: string,
-): Promise<{ slug: string; name: string }> {
-  const companies = await client.companies()
-  if (configured) {
-    const company = companies.find((c) => c.slug === configured)
-    if (!company) throw new Error(`Du har ikke tilgang til selskapet "${configured}" i Fiken`)
-    return company
+export function pickCompany(
+  companies: Company[],
+  preferred: (string | undefined)[],
+): Company | undefined {
+  for (const slug of preferred) {
+    const company = companies.find((c) => c.slug === slug)
+    if (company) return company
   }
-  if (companies.length === 1) return companies[0]!
-  throw new Error(
-    companies.length === 0
-      ? "Fiken-brukeren har ikke tilgang til noen selskaper"
-      : `Velg selskap med "companySlug" i regnskap.config.json: ${companies.map((c) => c.slug).join(", ")}`,
-  )
+  return companies.length === 1 ? companies[0] : undefined
 }

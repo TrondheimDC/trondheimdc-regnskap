@@ -12,6 +12,7 @@ import {
   findReportDocument,
   inspectFiken,
   type Prepared,
+  pickCompany,
   prepare,
 } from "../src/lib/booking.ts"
 import { parseReportPdf } from "../src/lib/checkin.ts"
@@ -734,4 +735,27 @@ test("findReportDocument never picks a document for another month", async () => 
     (await findReportDocument(client([doc(3, "Regnskapsbilag")]), "Regnskapsbilag", "2026-09"))
       .match?.documentId,
   ).toBe(3)
+})
+
+describe("pickCompany", () => {
+  const demo = { name: "Demo AS", slug: "demo-as" }
+  const tdc = { name: "Trondheim Developer Conference", slug: "trondheimdc" }
+
+  test("the user's choice wins over the configured default", () => {
+    expect(pickCompany([demo, tdc], ["demo-as", "trondheimdc"])).toBe(demo)
+  })
+
+  test("falls back to the configured default", () => {
+    expect(pickCompany([demo, tdc], [undefined, "trondheimdc"])).toBe(tdc)
+    expect(pickCompany([demo, tdc], ["gone-as", "trondheimdc"])).toBe(tdc)
+  })
+
+  test("uses the only company, even if it is not the configured one", () => {
+    expect(pickCompany([demo], [undefined, "trondheimdc"])).toBe(demo)
+  })
+
+  test("asks when there are several and none is preferred", () => {
+    expect(pickCompany([demo, tdc], [undefined, "other-as"])).toBeUndefined()
+    expect(pickCompany([], [undefined, "trondheimdc"])).toBeUndefined()
+  })
 })
