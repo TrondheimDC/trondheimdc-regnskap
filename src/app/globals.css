@@ -402,6 +402,7 @@ h2 {
 
 /* Amounts: aligned digits, never wrapped mid-number. */
 .tabular {
+  font-family: var(--font-family-mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }

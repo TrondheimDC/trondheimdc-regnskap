@@ -329,7 +329,7 @@ function CompanyPicker({
   return (
     <Screen title="Velg selskap">
       <SectionLabel>Hvilket selskap skal bilagene føres i?</SectionLabel>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {companies.map((c) => (
           <Button
             key={c.slug}
@@ -446,10 +446,10 @@ function Picker({ client, onPick }: { client?: Fiken; onPick: (s: Selection) => 
         ) : null}
 
         {inbox.isError || (inbox.data && docs.length === 0) ? null : (
-          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {inbox.data ? (
               docs.map((doc) => (
-                <li key={doc.documentId} className="flex">
+                <li key={doc.documentId} className="flex min-w-0">
                   <ReportCard doc={doc} onPick={() => onPick({ kind: "inbox", doc })} />
                 </li>
               ))
@@ -464,7 +464,7 @@ function Picker({ client, onPick }: { client?: Fiken; onPick: (s: Selection) => 
 
       <div className="flex flex-col gap-3">
         <SectionLabel>Fra fil</SectionLabel>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Button
             asChild
             variant="surface"

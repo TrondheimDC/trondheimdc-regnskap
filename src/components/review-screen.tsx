@@ -819,7 +819,7 @@ function RoundingCard({
         <ArrowRight className="size-4 shrink-0 text-[var(--color-fg-base)]/50" aria-label="til" />
         <AccountChip code={r.debitAccount} name={accountName(r.debitAccount)} />
         <span className="ml-auto flex flex-col items-end">
-          <span className="tabular font-display text-lg leading-snug">{amount}</span>
+          <span className="tabular text-lg leading-snug">{amount}</span>
           <span className="text-xs text-[var(--color-fg-base)]/60">{formatDay(r.date)}</span>
         </span>
       </div>
@@ -939,7 +939,7 @@ function BookedCard({
           </ul>
           <div className="mt-3 flex items-baseline justify-between gap-3 border-t border-white/10 pt-3">
             <span className="text-sm text-[var(--color-fg-base)]/70">Sum inkl. mva</span>
-            <span className="tabular font-display text-xl">{formatNok(voucher.gross)}</span>
+            <span className="tabular text-xl">{formatNok(voucher.gross)}</span>
           </div>
         </>
       ) : null}
@@ -986,7 +986,7 @@ function Totals({
             className="flex items-baseline justify-between gap-3 sm:flex-col sm:items-start sm:gap-0.5"
           >
             <dt className="text-sm text-[var(--color-fg-base)]/60">{item.label}</dt>
-            <dd className="tabular font-display text-lg">{formatNok(item.value)}</dd>
+            <dd className="tabular text-lg">{formatNok(item.value)}</dd>
           </div>
         ))}
       </dl>
@@ -1062,7 +1062,7 @@ function SideCard({
       ) : null}
       <div className="mt-3 flex items-baseline justify-between gap-3 border-t border-white/10 pt-3">
         <span className="text-sm text-[var(--color-fg-base)]/70">Sum inkl. mva</span>
-        <MarkedAmount marks={[]} className="font-display text-xl">
+        <MarkedAmount marks={[]} className="text-xl">
           {formatNok(gross)}
         </MarkedAmount>
       </div>
@@ -1124,19 +1124,20 @@ function TransferCard({ transfer: t, audit = false }: { transfer: Transfer; audi
     <Card
       marks={marks}
       icon={<ArrowRightLeft />}
-      title={`Utbetaling ${formatDay(t.date)}`}
-      subtitle={`Checkin-bilag ${t.voucher}`}
-      aside={
-        <MarkedAmount marks={marks} className="font-display text-xl leading-tight">
-          {formatNok(t.amount)}
-        </MarkedAmount>
-      }
+      title="Utbetaling"
+      subtitle={`${formatDay(t.date)} · Checkin-bilag ${t.voucher}`}
       className={cn(audit && !t.existing && "bg-[var(--color-bg-surface)]/50")}
     >
       <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
         <AccountChip code={config.checkinAccount} name="Checkin" />
         <ArrowRight className="size-4 shrink-0 text-[var(--color-fg-base)]/50" aria-label="til" />
         <AccountChip code={config.bankAccount} name="Bank" />
+      </div>
+      <div className="mt-3 flex items-baseline justify-between gap-3 border-t border-white/10 pt-3">
+        <span className="text-sm text-[var(--color-fg-base)]/70">Beløp</span>
+        <MarkedAmount marks={marks} className="text-xl">
+          {formatNok(t.amount)}
+        </MarkedAmount>
       </div>
 
       {t.existing ? (
