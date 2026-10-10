@@ -688,6 +688,40 @@ describe("auditBooked", () => {
     expect(sale.expected).toBe(2 * sale.actual)
   })
 
+  test("a month split per event over several vouchers and lines adds up", async () => {
+    const fake = new FakeFiken()
+    const p = await booked(fake)
+    // Each event on its own line, VAT rounded per line by Fiken; the gross adds up to the report.
+    const line = (gross: number) => {
+      const netPrice = Math.round(gross / 1.25)
+      return { account: "3000", netPrice, vat: gross - netPrice, vatType: "HIGH" }
+    }
+    const sale = fake.sales[0]!
+    sale.lines = [line(2057502), line(2057502)]
+    fake.sales.push({ ...sale, saleId: 998, saleNumber: "Partner", lines: [line(2057496)] })
+    // Fees split per event, the ones without VAT booked as HIGH_BASIS instead of NONE.
+    const purchase = fake.purchases[0]!
+    purchase.lines = purchase.lines.flatMap((l) => {
+      const half = {
+        netPrice: Math.round((l.netPrice ?? 0) / 2),
+        vat: Math.round((l.vat ?? 0) / 2),
+      }
+      const rest = { netPrice: (l.netPrice ?? 0) - half.netPrice, vat: (l.vat ?? 0) - half.vat }
+      const vatType = l.vatType === "NONE" ? "HIGH_BASIS" : l.vatType
+      return [half, rest].map((amounts) => ({ ...l, ...amounts, vatType }))
+    })
+
+    const audit = await auditBooked(fake.client, config, p)
+    const net = audit.checks.find((c) => c.label.startsWith("Salg 3000, 25 % mva: netto"))!
+    expect(net.expected - net.actual).toBe(1)
+    const none = audit.checks.find(
+      (c) => c.label === "Kjøp 4300, uten mva: netto i Fiken mot bilaget",
+    )!
+    expect(none.note).toMatch(/HIGH_BASIS/)
+    expect(audit.checks.filter((c) => c.note)).toEqual([none])
+    expect(audit.checks.filter((c) => !c.ok)).toEqual([])
+  })
+
   test("findBooked ignores sales in the month paid to other accounts", async () => {
     const fake = new FakeFiken()
     fake.sales.push({

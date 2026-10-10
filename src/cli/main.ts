@@ -190,7 +190,10 @@ function printMapping(rows: MappingRow[]) {
 function printChecks(checks: Check[]): boolean {
   for (const c of checks) {
     const text = `${c.label}: ${c.source ?? "beregnet"} ${formatNok(c.expected)}, Checkin ${formatNok(c.actual)}`
-    if (c.ok) {
+    if (c.ok && c.note) {
+      console.log(`  ! ${text}`)
+      console.log(`    ${c.note}`)
+    } else if (c.ok) {
       step(text)
     } else {
       warn(`${text} (avvik ${formatNok(c.expected - c.actual)})`)

@@ -16,6 +16,7 @@ import {
   OctagonX,
   ReceiptText,
   RefreshCw,
+  TriangleAlert,
 } from "lucide-react"
 import { type ReactNode, useMemo, useState } from "react"
 import { toast } from "sonner"
@@ -1134,6 +1135,9 @@ function ChecksCard({
   subtitle?: string
 }) {
   const failed = checks.filter((c) => !c.ok).length
+  // Deviations first, then passing checks with a note; both stay in view. The rest fold away.
+  const shown = checks.filter((c) => !c.ok || c.note)
+  const notes = shown.length - failed
   const figures = checkKeys(config)
   const marks = useMarksFor(figures.map((f) => f.key))
   return (
@@ -1155,13 +1159,22 @@ function ChecksCard({
 
       <Card
         icon={<ListChecks />}
-        title={failed === 0 ? "Alt stemmer" : `${failed} av ${checks.length} avviker`}
+        title={
+          <>
+            {failed === 0 ? "Alt stemmer" : `${failed} av ${checks.length} avviker`}
+            {notes > 0 ? (
+              <Badge className="ml-2 bg-[var(--color-fg-warning)]/15 align-middle text-[var(--color-fg-warning)]">
+                {notes} {notes === 1 ? "merknad" : "merknader"}
+              </Badge>
+            ) : null}
+          </>
+        }
         subtitle={subtitle}
       >
-        {failed > 0 ? (
+        {shown.length > 0 ? (
           <ul className="mt-4 flex flex-col gap-3">
-            {checks
-              .filter((c) => !c.ok)
+            {[...shown]
+              .sort((a, b) => Number(a.ok) - Number(b.ok))
               .map((c) => (
                 <CheckRow key={c.label} check={c} />
               ))}
@@ -1169,20 +1182,20 @@ function ChecksCard({
         ) : null}
 
         {/* Passing checks are detail: folded away so the deviations (or "Alt stemmer") stand out. */}
-        {failed < checks.length ? (
+        {shown.length < checks.length ? (
           <details className="group mt-4 border-t border-white/10 pt-3">
             <summary className="flex cursor-pointer list-none items-center gap-2 text-sm text-[var(--color-fg-base)]/70 hover:text-[var(--color-fg-base)] [&::-webkit-details-marker]:hidden">
               <ChevronRight
                 className="size-4 shrink-0 transition-transform group-open:rotate-90"
                 aria-hidden
               />
-              {failed === 0
+              {shown.length === 0
                 ? `Vis de ${checks.length} kontrollene`
-                : `Vis de ${checks.length - failed} som stemmer`}
+                : `Vis de ${checks.length - shown.length} som stemmer`}
             </summary>
             <ul className="mt-3 flex flex-col gap-3">
               {checks
-                .filter((c) => c.ok)
+                .filter((c) => c.ok && !c.note)
                 .map((c) => (
                   <CheckRow key={c.label} check={c} />
                 ))}
@@ -1215,7 +1228,12 @@ function ChecksCard({
 function CheckRow({ check }: { check: Check }) {
   return (
     <li className="flex gap-3">
-      {check.ok ? (
+      {check.ok && check.note ? (
+        <TriangleAlert
+          className="mt-0.5 size-5 shrink-0 text-[var(--color-fg-warning)]"
+          aria-label="Merknad"
+        />
+      ) : check.ok ? (
         <CircleCheck
           className="mt-0.5 size-5 shrink-0 text-[var(--color-fg-brand)]"
           aria-label="OK"
@@ -1235,6 +1253,9 @@ function CheckRow({ check }: { check: Check }) {
         </span>
         {!check.ok && check.hint ? (
           <span className="mt-1 block text-[var(--color-bg-danger)]">{check.hint}</span>
+        ) : null}
+        {check.ok && check.note ? (
+          <span className="mt-1 block text-[var(--color-fg-warning)]">{check.note}</span>
         ) : null}
       </span>
     </li>

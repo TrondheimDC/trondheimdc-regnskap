@@ -19,6 +19,8 @@ export interface Check {
   source?: string
   /** Hint shown when the check fails. */
   hint?: string
+  /** A passing check with something worth a look, e.g. an unusual mva type. Shown, but never blocks. */
+  note?: string
 }
 
 const VAT_LABELS: Record<string, string> = {
@@ -286,13 +288,22 @@ export interface BookedLine {
   vat: number
 }
 
+/** The rates we book with. Any other type with no VAT on the line counts as "NONE". */
+const RATED = new Set(["HIGH", "MEDIUM", "LOW"])
+
 function byAccountAndVat(
   lines: { account: string; vatType: string; netPrice: number; vat?: number }[],
 ) {
-  const groups = new Map<string, { account: string; vatType: string; net: number; vat: number }>()
+  const groups = new Map<
+    string,
+    { account: string; vatType: string; types: Set<string>; net: number; vat: number }
+  >()
   for (const l of lines) {
-    const key = `${l.account} ${l.vatType}`
-    const g = groups.get(key) ?? { account: l.account, vatType: l.vatType, net: 0, vat: 0 }
+    // E.g. HIGH_BASIS puts no VAT on the line, same as NONE; only the mva-melding differs.
+    const vatType = RATED.has(l.vatType) || l.vat ? l.vatType : "NONE"
+    const key = `${l.account} ${vatType}`
+    const g = groups.get(key) ?? { account: l.account, vatType, types: new Set(), net: 0, vat: 0 }
+    g.types.add(l.vatType)
     g.net += l.netPrice
     g.vat += l.vat ?? 0
     groups.set(key, g)
@@ -302,8 +313,9 @@ function byAccountAndVat(
 
 /**
  * For a month that is already booked: the sale and purchase lines in Fiken, summed per account
- * and VAT type, must match what the report gives. A missing, doubled or mis-keyed line shows up
- * as a difference. VAT may drift by rounding when Fiken computed it.
+ * and VAT type, must match what the report gives. The month may be split over several vouchers
+ * and lines (e.g. one line per event); only the sums count. A missing, doubled or mis-keyed line
+ * shows up as a difference. Net and VAT may drift by rounding, since Fiken rounds every line.
  */
 export function verifyBooked(
   plan: Plan,
@@ -319,25 +331,34 @@ export function verifyBooked(
       const h = have.get(key)
       const { account, vatType } = (w ?? h)!
       const label = `${name} ${account}, ${VAT_LABELS[vatType] ?? vatType}`
+      // The sums match, but Fiken has another type than we would book, e.g. HIGH_BASIS for NONE.
+      const other = [...(h?.types ?? [])].filter((t) => t !== vatType)
+      const note =
+        other.length > 0
+          ? `Ført med mva-type ${other.join(", ")} i Fiken, ikke «${VAT_LABELS[vatType] ?? vatType}». Beløpet stemmer og det er ikke trukket mva. Bytt mva-type i Fiken om du vil rydde.`
+          : undefined
       const hint = !h
         ? `Fant ikke linjen i Fiken. Sjekk at ${name.toLowerCase()}et er ført, med riktig konto og mva.`
         : !w
           ? "Linjen står ikke i bilaget. Sjekk konto og mva på føringen i Fiken."
-          : `Beløpet er ulikt. Sjekk om ${name.toLowerCase()}et er ført to ganger eller med feil beløp.`
+          : `Summen er ulik. Sjekk om ${name.toLowerCase()}et er ført to ganger eller med feil beløp.`
+      const net = { fiken: h?.net ?? 0, report: w?.net ?? 0 }
+      const vat = { fiken: h?.vat ?? 0, report: w?.vat ?? 0 }
       checks.push({
         label: `${label}: netto i Fiken mot bilaget`,
-        expected: h?.net ?? 0,
-        actual: w?.net ?? 0,
-        ok: Math.abs((h?.net ?? 0) - (w?.net ?? 0)) <= TOLERANCE_ORE,
+        expected: net.fiken,
+        actual: net.report,
+        ok: Math.abs(net.fiken - net.report) <= TOLERANCE_ORE,
         source: "Fiken",
         hint,
+        note,
       })
-      if (w?.vat || h?.vat) {
+      if (vat.fiken || vat.report) {
         checks.push({
           label: `${label}: mva i Fiken mot bilaget`,
-          expected: h?.vat ?? 0,
-          actual: w?.vat ?? 0,
-          ok: Math.abs((h?.vat ?? 0) - (w?.vat ?? 0)) <= TOLERANCE_ORE,
+          expected: vat.fiken,
+          actual: vat.report,
+          ok: Math.abs(vat.fiken - vat.report) <= TOLERANCE_ORE,
           source: "Fiken",
           hint,
         })

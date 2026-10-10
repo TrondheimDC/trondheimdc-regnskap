@@ -15,6 +15,7 @@
   --color-bg-base: var(--color-black);
   --color-bg-surface: var(--color-black-2);
   --color-bg-danger: #f1422a;
+  --color-fg-warning: #f5c04a;
   --color-fg-base: var(--color-white-1);
   --color-fg-brand: var(--color-green-1);
   --color-fg-always-dark: var(--color-black-3);
