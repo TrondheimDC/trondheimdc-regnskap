@@ -15,6 +15,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
             retry: false,
             refetchOnWindowFocus: false,
             staleTime: Number.POSITIVE_INFINITY,
+            // Keep what was read until "Oppdater", a booking or logout: going back to the inbox
+            // or reopening a bilag must not read Fiken again just because the screen unmounted.
+            gcTime: Number.POSITIVE_INFINITY,
           },
         },
       }),

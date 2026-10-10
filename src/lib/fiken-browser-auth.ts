@@ -70,7 +70,9 @@ export async function startLogin(): Promise<void> {
   const challenge = base64url(
     new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))),
   )
-  sessionStorage.setItem(PENDING_KEY, JSON.stringify({ verifier, state }))
+  // Come back to the bilag that was open, not just the front page.
+  const returnTo = window.location.pathname + window.location.search
+  sessionStorage.setItem(PENDING_KEY, JSON.stringify({ verifier, state, returnTo }))
 
   const url = new URL(AUTHORIZE_URL)
   url.search = new URLSearchParams({
@@ -84,15 +86,19 @@ export async function startLogin(): Promise<void> {
   window.location.assign(url.toString())
 }
 
-/** Handles the redirect back from Fiken (on /auth/callback). */
-export async function completeLogin(params: URLSearchParams): Promise<void> {
+/** Handles the redirect back from Fiken (on /auth/callback). Returns the path to go back to. */
+export async function completeLogin(params: URLSearchParams): Promise<string> {
   const pending = sessionStorage.getItem(PENDING_KEY)
   sessionStorage.removeItem(PENDING_KEY)
   const error = params.get("error")
   if (error) throw new Error(`Innlogging avbrutt: ${params.get("error_description") ?? error}`)
   if (!pending) throw new Error("Fant ingen påbegynt innlogging i denne fanen. Prøv igjen.")
 
-  const { verifier, state } = JSON.parse(pending) as { verifier: string; state: string }
+  const { verifier, state, returnTo } = JSON.parse(pending) as {
+    verifier: string
+    state: string
+    returnTo?: string
+  }
   if (params.get("state") !== state)
     throw new Error("Klarte ikke å bekrefte innloggingen. Prøv igjen.")
   const code = params.get("code")
@@ -104,6 +110,8 @@ export async function completeLogin(params: URLSearchParams): Promise<void> {
     redirect_uri: redirectUri(),
     code_verifier: verifier,
   })
+  // Only a path on this site; "//host" would leave it.
+  return returnTo?.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/"
 }
 
 export function isLoggedIn(): boolean {

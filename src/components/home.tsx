@@ -1,10 +1,11 @@
 "use client"
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   Building2,
   Check,
   ChevronRight,
+  FileQuestion,
   FileText,
   Inbox,
   LogIn,
@@ -12,8 +13,11 @@ import {
   RefreshCw,
   Upload,
 } from "lucide-react"
-import { type ReactNode, useMemo, useState } from "react"
+import { usePathname } from "next/navigation"
+import { type ReactNode, useEffect, useMemo, useState } from "react"
+import { AppLoading } from "@/components/app-loading"
 import { ErrorScreen } from "@/components/error-screen"
+import { NotFoundScreen } from "@/components/not-found-screen"
 import { ReviewScreen, type Selection } from "@/components/review-screen"
 import { TdcLogo } from "@/components/tdc-logo"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -27,14 +31,40 @@ import { browserAuth, isLoggedIn, logout, startLogin } from "@/lib/fiken-browser
 import { formatDay, formatMonth } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
+/**
+ * The app's screens: the inbox, a bilag from it, or a local file. They all live in this one
+ * page; nginx (and the dev rewrite in next.config.ts) serves it for every path without a file.
+ */
+type Route = { page: "inbox" } | { page: "bilag"; documentId: string } | { page: "file" }
+
+function parseRoute(pathname: string): Route | undefined {
+  const path = pathname.replace(/\/+$/, "") || "/"
+  if (path === "/") return { page: "inbox" }
+  if (path === "/fil") return { page: "file" }
+  const documentId = path.match(/^\/bilag\/(\d+)$/)?.[1]
+  return documentId ? { page: "bilag", documentId } : undefined
+}
+
+/**
+ * Navigation is shallow: the page stays mounted and the query cache keeps what was read from
+ * Fiken. Back/forward and reload work because the route is in the URL.
+ */
+function navigate(path = "/") {
+  window.history.pushState(null, "", path)
+  window.scrollTo(0, 0)
+}
+
 export function Home() {
   // Providers only render this after mount, so sessionStorage is readable here.
   const [loggedIn, setLoggedIn] = useState(isLoggedIn)
   const queryClient = useQueryClient()
+  const route = parseRoute(usePathname())
 
+  if (!route) return <NotFoundScreen />
   if (!loggedIn) return <LoginScreen />
   return (
     <Workspace
+      route={route}
       onLogout={() => {
         logout()
         queryClient.clear()
@@ -97,11 +127,26 @@ function SectionLabel({ children, aside }: { children: ReactNode; aside?: ReactN
   )
 }
 
+const inboxQuery = (client?: Fiken) =>
+  queryOptions({
+    queryKey: ["inbox", client?.companySlug],
+    queryFn: () =>
+      client
+        ? listReportDocuments(client, config.inbox.reportName)
+        : Promise.reject(new Error("Ikke koblet til Fiken")),
+    enabled: client !== undefined,
+  })
+
 // The company the user chose, for users with access to several. Not a secret; survives logout.
 const COMPANY_KEY = "regnskap.company"
 
-function Workspace({ onLogout }: { onLogout: () => void }) {
-  const [selection, setSelection] = useState<Selection>()
+// A picked file can't go in the URL; it waits in the query cache until reload or logout.
+const FILE_KEY = ["file"]
+
+function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) {
+  const queryClient = useQueryClient()
+  const docId = route.page === "bilag" ? route.documentId : undefined
+  const fileOpen = route.page === "file"
 
   const session = useQuery({
     queryKey: ["session"],
@@ -121,11 +166,32 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
     () => (company ? new Fiken(browserAuth, company.slug, API_BASE) : undefined),
     [company],
   )
+  const inbox = useQuery(inboxQuery(client))
 
   const choose = (c: Company) => {
     localStorage.setItem(COMPANY_KEY, c.slug)
     setChosen(c.slug)
     setChoosing(false)
+  }
+
+  const file = fileOpen ? queryClient.getQueryData<File>(FILE_KEY) : undefined
+  const doc = docId ? inbox.data?.find((d) => String(d.documentId) === docId) : undefined
+  const selection: Selection | undefined = file
+    ? { kind: "file", file }
+    : doc
+      ? { kind: "inbox", doc }
+      : undefined
+
+  // After a reload the file is gone; show the inbox instead of a dead link.
+  const lostFile = fileOpen && file === undefined
+  useEffect(() => {
+    if (lostFile) window.history.replaceState(null, "", "/")
+  }, [lostFile])
+
+  const open = (s: Selection) => {
+    if (s.kind === "inbox") return navigate(`/bilag/${s.doc.documentId}`)
+    queryClient.setQueryData(FILE_KEY, s.file)
+    navigate("/fil")
   }
 
   if (session.isError) {
@@ -179,7 +245,26 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         client={client}
         companyName={company.name}
         selection={selection}
-        onBack={() => setSelection(undefined)}
+        onBack={() => navigate()}
+      />
+    )
+  }
+
+  // Opened from a link or reload: wait for the inbox to know which bilag it is.
+  if (docId && !inbox.isError) {
+    if (!inbox.data) return <AppLoading label="Åpner bilaget…" />
+    return (
+      <ErrorScreen
+        illustration={
+          <FileQuestion className="mx-auto size-20 text-[var(--color-fg-brand)]" aria-hidden />
+        }
+        title="Fant ikke bilaget"
+        body="Det ligger ikke i innboksen i Fiken."
+        actions={
+          <Button onClick={() => navigate()} className="w-full sm:w-auto">
+            Til innboksen
+          </Button>
+        }
       />
     )
   }
@@ -221,7 +306,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         </Button>
       </div>
 
-      <Picker client={client} onPick={setSelection} />
+      <Picker client={client} onPick={open} />
     </Screen>
   )
 }
@@ -296,14 +381,7 @@ function PickerLoading() {
 }
 
 function Picker({ client, onPick }: { client?: Fiken; onPick: (s: Selection) => void }) {
-  const inbox = useQuery({
-    queryKey: ["inbox", client?.companySlug],
-    queryFn: () =>
-      client
-        ? listReportDocuments(client, config.inbox.reportName)
-        : Promise.reject(new Error("Ikke koblet til Fiken")),
-    enabled: client !== undefined,
-  })
+  const inbox = useQuery(inboxQuery(client))
   const docs = inbox.data ?? []
   const unused = docs.filter((d) => !d.used).length
 

@@ -8,7 +8,7 @@ import { ErrorScreen } from "@/components/error-screen"
 import { Button } from "@/components/ui/button"
 import { completeLogin } from "@/lib/fiken-browser-auth"
 
-/** Fiken redirects here after login; swaps the code for a token, then goes home. */
+/** Fiken redirects here after login; swaps the code for a token, then goes back where login started. */
 export function AuthCallback() {
   const router = useRouter()
   const [error, setError] = useState<string>()
@@ -19,7 +19,8 @@ export function AuthCallback() {
     if (started.current) return
     started.current = true
     completeLogin(new URLSearchParams(window.location.search))
-      .then(() => router.replace("/"))
+      // A full load: /bilag/<id> is not a prerendered route the router can fetch.
+      .then((returnTo) => window.location.replace(returnTo))
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   }, [router])
 
