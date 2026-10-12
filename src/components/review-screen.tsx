@@ -974,16 +974,16 @@ function Totals({
     { label: "Salg − kjøp", value: plan.expectedPayout },
   ]
   return (
-    <section className="flex flex-col gap-3 rounded-xl bg-[var(--color-bg-surface)] p-4 sm:p-5">
+    <section className="@container flex flex-col gap-3 rounded-xl bg-[var(--color-bg-surface)] p-4 sm:p-5">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-[var(--color-fg-base)]/60">Bilagsdato {formatDay(plan.date)}</p>
         <StatusBadge blocked={blocked} failed={failed} />
       </div>
-      <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-3">
+      <dl className="grid gap-x-4 gap-y-2 @xl:grid-cols-3">
         {items.map((item) => (
           <div
             key={item.label}
-            className="flex items-baseline justify-between gap-3 sm:flex-col sm:items-start sm:gap-0.5"
+            className="flex items-baseline justify-between gap-3 @xl:flex-col @xl:items-start @xl:gap-0.5"
           >
             <dt className="text-sm text-[var(--color-fg-base)]/60">{item.label}</dt>
             <dd className="tabular text-lg">{formatNok(item.value)}</dd>
