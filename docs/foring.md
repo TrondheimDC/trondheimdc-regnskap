@@ -185,6 +185,52 @@ Hvis Checkin er satt som kunde på salget og leverandør på kjøpet, havner fø
 - **Finne riktig kontakt:** `pnpm foring contacts checkin` viser kontakt-ID, org.nr. og reskontrokontoer. Checkin AS har org.nr. 994 035 053. Noen gebyrer kommer fra CheckinPay AS (se side 3 i bilaget).
 - **Kontroll:** verktøyet sjekker at kontakten finnes og har riktig rolle, og stopper hvis ikke.
 
+## Checkins rapporter og kontoplan
+
+Kilde: [Regnskap i Checkin fra A til Å](https://www.checkinevent.com/helpcenter/regnskap-i-checkin-101-0).
+
+### Rapportene
+
+Checkin sender to rapporter. Bare regnskapsbilaget skal føres.
+
+- **Oppgjørsrapport:** kvittering for hvert oppgjør, som utbetales hver 14. dag. Den viser hva oppgjøret består av, et sammendrag per arrangement og en transaksjonsliste omtrent som et kontoutdrag. Den føres ikke, men kan brukes til å kontrollere en utbetaling.
+- **Regnskapsbilag:** alle bevegelser i måneden.
+  - **Side 2:** balanse (IB, netto endring, UB), resultat og utbetalingsoversikt. Verktøyet leser denne siden.
+  - **Side 3:** «Regnskapstall for motregning», som Checkin anbefaler å føre. Den viser de samme beløpene fordelt på mva, avdeling, prosjekt og leverandør, f.eks. Checkin AS og CheckinPay AS.
+  - **Excel-filen:** har alle posteringene.
+
+### Kontoplanen
+
+Kontonumrene i bilaget er Checkins standard kontoplan. Vi bruker dem bare for å finne beløpene. I Fiken føres de på våre egne kontoer, fordi Fiken fungerer annerledes:
+
+- **Mva:** Fiken fører mva selv ut fra mva-typen på linjen. Vi fører aldri direkte på 27xx.
+- **Pengene hos Checkin:** de ligger på en betalingstjenestekonto (1960:xxxxx), ikke på en bankkonto.
+- **Periodisering:** Fiken periodiserer selv.
+
+| Checkin | Betyr | I Fiken |
+|---|---|---|
+| 3000 Salgsinntekt, mva-pliktig | Billetter med 25 % mva | Salg på 3000, høy sats |
+| 4300 Varekostnad inkl. mva | Gebyrer til Checkin med mva | Kjøp på 4300, høy sats |
+| 4335 Varekostnad uten mva | Gebyrer uten mva, f.eks. transaksjonsgebyr | Kjøp på 4300, uten mva |
+| 2701 / 2711 Utgående / inngående mva, høy sats | Mva på billetter / gebyrer | Føres av Fiken. Brukes i mva-kontrollen |
+| 1920 Bankinnskudd | Det som er utbetalt til banken i perioden | Fri postering 1960:10001 → 1920:10001. Brukes i utbetalingskontrollen |
+| 1921 Bankinnskudd Checkin | Saldoen vår hos Checkin | `checkinAccount` (1960:10001). Brukes i saldokontrollen |
+| 1500 Kundefordringer | Fakturerte billetter som ikke er betalt | Ligger på `checkinAccount`. Brukes i saldokontrollen |
+| 3990 / 2965 Periodisert salgsinntekt / forskuddsbetalt inntekt | Checkins periodisering frem til arrangementet | Står i `ignore`. Se [Periodisering](#periodisering) |
+
+Kontoer som ikke er i oppskriften stopper kjøringen (se [Oppskriften](#oppskriften)). Disse har vi ikke sett ennå, men de finnes i Checkins kontoplan:
+
+- **3200** salg unntatt mva og **2704** utgående mva, lav sats (f.eks. mat): trenger en egen salgslinje med riktig mva-type.
+- **2900** gjeld til kunde (deltaker har betalt for mye): trenger egen vurdering.
+- **1922** direktebetaling: betalt direkte til oss, ikke via Checkin. Pengene har aldri vært hos Checkin.
+- **7745** øreavrunding (under 50 øre per bestilling), **7770** internasjonalt overføringsgebyr, **7800 / 7835** tap på fordringer: trenger en egen linje på riktig konto i Fiken.
+
+Spør regnskapsfører før noen av disse legges i oppskriften.
+
+Checkins **7745** er ikke det samme som vår `reconcile.roundingAccount` (7740). 7745 er avrunding på en bestilling hos Checkin. 7740 retter øreavvik mellom Fikens mva og Checkins mva, se [Øreavrunding](#øreavrunding).
+
+Om gebyrene: transaksjonsgebyret er en prosent per billett. Systemavgiften er en prosent pluss et fast beløp per billett. Tilbakebetalingsgebyret er 10 kr inkl. mva per refusjon. Andre gebyrer er SMS, print, EHF, etikettutskrift og gratisbilletter.
+
 ## Øreavrunding
 
 Netto og mva i Fiken kan avvike noen øre fra Checkins bilag. Summen inkl. mva er alltid den samme, og det er den som går inn og ut av Checkin-kontoen.
@@ -246,7 +292,7 @@ Etter `--mode create` hentes saldoen på nytt for å bekrefte at Fiken har ført
 "reconcile": { "payoutAccounts": ["1920"], "balanceAccounts": ["1500", "1921"], "outputVat": { "HIGH": "2701" }, "inputVat": { "HIGH": "2711" } }
 ```
 
-I Checkins regnskapsbilag er 1500 kundefordringer (fakturerte billetter som ikke er betalt ennå) og 1921 penger Checkin/CheckinPay holder for oss. 3990 er Checkins egen periodisering, som vi ikke følger, og står derfor i `ignore`.
+I Checkins regnskapsbilag er 1500 kundefordringer (fakturerte billetter som ikke er betalt ennå) og 1921 penger Checkin/CheckinPay holder for oss. 3990 er Checkins egen periodisering, som vi ikke følger, og står derfor i `ignore`. Se [Checkins rapporter og kontoplan](#checkins-rapporter-og-kontoplan).
 
 ## Begrensninger
 
