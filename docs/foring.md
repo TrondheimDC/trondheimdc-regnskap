@@ -196,7 +196,7 @@ Checkin sender to rapporter. Bare regnskapsbilaget skal føres.
 - **Oppgjørsrapport:** kvittering for hvert oppgjør, som utbetales hver 14. dag. Den viser hva oppgjøret består av, et sammendrag per arrangement og en transaksjonsliste omtrent som et kontoutdrag. Den føres ikke, men kan brukes til å kontrollere en utbetaling.
 - **Regnskapsbilag:** alle bevegelser i måneden.
   - **Side 2:** balanse (IB, netto endring, UB), resultat og utbetalingsoversikt. Verktøyet leser denne siden.
-  - **Side 3:** «Regnskapstall for motregning», som Checkin anbefaler å føre. Den viser de samme beløpene fordelt på mva, avdeling, prosjekt og leverandør, f.eks. Checkin AS og CheckinPay AS.
+  - **Side 3:** «Regnskapstall for motregning», som Checkin anbefaler å føre. Den viser de samme beløpene fordelt på mva, avdeling, prosjekt og leverandør, f.eks. Checkin AS og CheckinPay AS. Vi trenger ikke den fordelingen så lenge bare ett arrangement selger billetter om gangen, se [Begrensninger](#begrensninger).
   - **Excel-filen:** har alle posteringene.
 
 ### Kontoplanen
@@ -227,7 +227,16 @@ Kontoer som ikke er i oppskriften stopper kjøringen (se [Oppskriften](#oppskrif
 
 Spør regnskapsfører før noen av disse legges i oppskriften.
 
-Checkins **7745** er ikke det samme som vår `reconcile.roundingAccount` (7740). 7745 er avrunding på en bestilling hos Checkin. 7740 retter øreavvik mellom Fikens mva og Checkins mva, se [Øreavrunding](#øreavrunding).
+**Checkins 7745 og vår 7740** er samme slags konto: øreavrunding uten mva. Forskjellen er hvor avviket oppstår.
+
+- **7745 hos Checkin:** en deltaker har betalt noen øre for mye eller for lite på en bestilling. Det er en ekte bevegelse i bilaget, og den endrer det Checkin holder for oss.
+- **7740 hos oss** (`reconcile.roundingAccount`): retter øreavvik mellom Fikens mva og Checkins mva på eldre måneder (se [Øreavrunding](#øreavrunding)). Den finnes bare i Fiken, ikke i bilaget.
+
+Hvis 7745 dukker opp, må det tenkes gjennom før det føres:
+
+- **Oppskriften kan ikke føre det riktig i dag.** Alle linjer føres på `sale.account` eller `purchase.account`. Legges 7745 i en `from`, havner avrundingen på 3000 eller 4300, ikke på 7740.
+- **`ignore` er feil.** Beløpet mangler da i Fiken, og saldokontrollen avviker med de ørene.
+- **Det må ikke føres mellom Checkin-kontoen og 7740.** Kontrollen for eldre måneder regner alle slike posteringer i måneden som vår mva-avrunding. En ført 7745 ville da skjule, eller lage, et mva-avvik. Bruk en egen konto, eller lær kontrollen å skille dem.
 
 Om gebyrene: transaksjonsgebyret er en prosent per billett. Systemavgiften er en prosent pluss et fast beløp per billett. Tilbakebetalingsgebyret er 10 kr inkl. mva per refusjon. Andre gebyrer er SMS, print, EHF, etikettutskrift og gratisbilletter.
 
@@ -296,6 +305,9 @@ I Checkins regnskapsbilag er 1500 kundefordringer (fakturerte billetter som ikke
 
 ## Begrensninger
 
+- **Ett arrangement om gangen:** Verktøyet leser totalene på side 2, ikke per arrangement på side 3. Alt salg i måneden føres derfor som ett salg, f.eks. «TDC 2026». Det stemmer så lenge bare ett arrangement selger billetter om gangen. Starter billettsalget for neste år før årets konferanse er holdt, blandes f.eks. 2026 og 2027 sammen i samme føring og i samme periodisering.
+  For å støtte det må verktøyet lese hvert arrangement for seg fra side 3 og føre ett salg og ett kjøp per arrangement, hver med sin egen periodisering. Flere føringer er ikke noe problem når det skjer automatisk.
+  Inntil da: ikke start salget for neste år så lenge det fortsatt er bevegelser på årets arrangement, som salg, refusjoner eller gebyrer.
 - **PDF-leseren:** Den er testet mot et ekte regnskapsbilag (september 2026). Den finner sammendragssiden med *Resultat*, rader som starter med `<konto> - <navn>` og beløpet under *Netto endring*. Hvis Checkin endrer oppsettet, vil kontrollene i steg 2 feile.
 - **Banklinjer:** Fiken-API-et har ingen banklinjer eller avstemming. Den fri posteringen må derfor kobles til banklinjen i Superføring for hånd, se [Utbetalinger](#utbetalinger-fri-posteringer).
 - **Dato:** Fiken anbefaler å datere overføringer fra betalingstjenester med datoen pengene kom inn på banken. Verktøyet bruker Checkins «Bokført»-dato. Hvis en utbetaling krysser et månedsskifte, kan månedens bankavstemming på 1920 avvike. Se [TODO.md](TODO.md).
