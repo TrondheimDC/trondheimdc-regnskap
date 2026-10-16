@@ -189,14 +189,15 @@ function printMapping(rows: MappingRow[]) {
 /** Prints checks with ✓/✗ and returns whether all passed. */
 function printChecks(checks: Check[]): boolean {
   for (const c of checks) {
-    const text = `${c.label}: ${c.source ?? "beregnet"} ${formatNok(c.expected)}, Checkin ${formatNok(c.actual)}`
+    const amounts = `${c.source ?? "beregnet"} ${formatNok(c.expected)}, Checkin ${formatNok(c.actual)}`
+    const text = `${c.label}: ${c.detail ?? amounts}`
     if (c.ok && c.note) {
       console.log(`  ! ${text}`)
       console.log(`    ${c.note}`)
     } else if (c.ok) {
       step(text)
     } else {
-      warn(`${text} (avvik ${formatNok(c.expected - c.actual)})`)
+      warn(c.detail ? text : `${text} (avvik ${formatNok(c.expected - c.actual)})`)
       if (c.hint) console.log(`    ${c.hint}`)
     }
   }

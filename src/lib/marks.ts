@@ -105,6 +105,9 @@ export function buildMarks({ plan, source, transfers }: Prepared, config: Config
   }
   for (const t of transfers) add(payoutKey(t.voucher), "payout", `Bilag ${t.voucher}`)
   for (const { key, label } of checkKeys(config)) add(key, "check", label)
-  for (const account of config.ignore) add(`result:${account}`, "ignored", `${account} ignoreres`)
+  for (const account of config.ignore) {
+    add(`result:${account}`, "ignored", `${account} ignoreres`)
+    add(`balance:${account}`, "ignored", `${account} ignoreres`)
+  }
   return marks
 }

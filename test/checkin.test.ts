@@ -8,6 +8,8 @@ import {
   explainRounding,
   reconcile,
   roundingLineText,
+  verifyEvent,
+  verifyKnownAccounts,
   verifyNet,
   verifyPayoutList,
   verifyPlan,
@@ -229,6 +231,45 @@ test("accounts not covered by the recipe stop the run", () => {
     "4300": 123440,
   })
   expect(() => toReport("2026-03", parseAmountsArg("3000=100,3002=50"), config)).toThrow(/3002/)
+  // Accounts in Checkin's chart are explained.
+  expect(() => toReport("2026-03", parseAmountsArg("3000=100,7745=0.30"), config)).toThrow(
+    /7745 \(Øreavrunding: .*\): 0\.3/,
+  )
+})
+
+test("balance accounts the config doesn't know get a note", () => {
+  const balance = new Map([
+    ["1920", 5000000],
+    ["2965", -4938000],
+    ["2900", 1200],
+    ["2711", 0],
+    ["1234", -500],
+  ])
+  const checks = verifyKnownAccounts(balance, config)
+  expect(checks.map((c) => [c.label, c.ok, c.actual])).toEqual([
+    ["Ny konto i bilaget: 2900 Gjeld til kunde", true, 1200],
+    ["Ny konto i bilaget: 1234", true, -500],
+  ])
+  expect(checks[0]!.note).toMatch(/^Gjeld til kunde: en deltaker har betalt for mye\. /)
+})
+
+test("the report names one year of the event", async () => {
+  const { text } = await parseReportPdf(MARCH_2026)
+  expect(verifyEvent(text, "TDC").map((c) => [c.ok, c.detail, c.note])).toEqual([
+    [true, "TDC 2026", undefined],
+  ])
+
+  const both = verifyEvent(["Prosjekt TDC 2026", "Prosjekt TDC 2027 Partnerstand"], "TDC")
+  expect(both.map((c) => [c.ok, c.detail])).toEqual([[false, "TDC 2026, TDC 2027"]])
+
+  // Not "TDC" inside another word, nor a longer number.
+  const none = verifyEvent(["XTDC 2027", "TDC 20271", "Konto 3000"], "TDC")
+  expect(none.map((c) => [c.ok, c.detail, Boolean(c.note)])).toEqual([
+    [true, "Fant ikke «TDC ÅÅÅÅ»", true],
+  ])
+
+  expect(verifyEvent(undefined, "TDC")).toEqual([])
+  expect(verifyEvent(text, undefined)).toEqual([])
 })
 
 test("books on our own accounts regardless of the Checkin account numbers", () => {

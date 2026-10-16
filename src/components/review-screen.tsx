@@ -1296,9 +1296,13 @@ function CheckRow({ check }: { check: Check }) {
       <span className="min-w-0 text-sm">
         <span className="block leading-snug">{check.label}</span>
         <span className="mt-0.5 block text-[var(--color-fg-base)]/60 tabular-nums">
-          {check.source ?? "beregnet"} {formatNok(check.expected)} · Checkin{" "}
-          {formatNok(check.actual)}
-          {!check.ok ? ` · avvik ${formatNok(check.expected - check.actual)}` : ""}
+          {check.detail ?? (
+            <>
+              {check.source ?? "beregnet"} {formatNok(check.expected)} · Checkin{" "}
+              {formatNok(check.actual)}
+              {!check.ok ? ` · avvik ${formatNok(check.expected - check.actual)}` : ""}
+            </>
+          )}
         </span>
         {!check.ok && check.hint ? (
           <span className="mt-1 block text-[var(--color-bg-danger)]">{check.hint}</span>

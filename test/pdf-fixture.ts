@@ -62,6 +62,8 @@ export interface ReportData {
   balance: [string, string, string, string][]
   result: [string, string][]
   payouts: [string, string, string, string][]
+  /** Event names on the details page, e.g. "TDC 2026". */
+  events?: string[]
 }
 
 export function checkinPdf(data: ReportData): Uint8Array {
@@ -127,6 +129,11 @@ export function checkinPdf(data: ReportData): Uint8Array {
   // Details page with the same accounts but other amounts; must not be read.
   const details = new Page()
   details.text("Regnskapstall for motregning", 40, { size: 12 })
+  for (const event of data.events ?? [])
+    details.row([
+      ["Prosjekt", 40],
+      [event, 300],
+    ])
   details.row(
     [
       ["Konto", 40],
@@ -172,4 +179,5 @@ export const MARCH_2026 = checkinPdf({
     ["17342:13", "6. mar. 2026", "8. mar. 2026", "20 000,00"],
     ["17342:14", "20. mar. 2026", "22. mar. 2026", "30 000,00"],
   ],
+  events: ["TDC 2026", "TDC 2026 Partnerstand"],
 })

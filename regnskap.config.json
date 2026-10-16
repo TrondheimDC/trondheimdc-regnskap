@@ -31,7 +31,8 @@
       }
     ]
   },
-  "ignore": ["3990"],
+  "ignore": ["3990", "2965"],
+  "event": "TDC",
   "reconcile": {
     "payoutAccounts": ["1920"],
     "balanceAccounts": ["1500", "1921"],

@@ -45,6 +45,8 @@ import {
   roundingDrift,
   roundingLineText,
   verifyBooked,
+  verifyEvent,
+  verifyKnownAccounts,
   verifyNet,
   verifyPayoutList,
   verifyPlan,
@@ -230,6 +232,8 @@ export function prepare(source: ReportSource, config: Config, month = source.mon
       ...vatChecks,
       ...verifyPayoutList(source, config.reconcile.payoutAccounts),
       ...verifyNet(plan, source.balance, config.reconcile),
+      ...verifyKnownAccounts(source.balance, config),
+      ...verifyEvent(source.text, config.event),
     ],
   }
 }

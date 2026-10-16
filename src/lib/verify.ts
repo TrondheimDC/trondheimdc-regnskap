@@ -1,7 +1,7 @@
 // Cross-checks the computed Fiken lines against other numbers in the same Checkin report,
 // so a misread PDF or a wrong account mapping shows up before anything is booked.
 
-import type { Movements, Payout } from "./checkin.ts"
+import { CHECKIN_ACCOUNTS, type Movements, type Payout } from "./checkin.ts"
 import type { VatType } from "./fiken.ts"
 import { formatNok, netFromGross, type Plan } from "./plan.ts"
 
@@ -23,6 +23,8 @@ export interface Check {
   note?: string
   /** Shown even when it passes: the Checkin account in Fiken against what Checkin holds for us. */
   pinned?: boolean
+  /** Shown instead of the two amounts, for a check that doesn't compare sums. */
+  detail?: string
 }
 
 const VAT_LABELS: Record<string, string> = {
@@ -178,6 +180,77 @@ export function verifyPayoutList(
       actual: paidOut,
       ok: listed === paidOut,
       source: "sum",
+    },
+  ]
+}
+
+/**
+ * A balance account in the report that the config doesn't name (payout, balance, VAT or ignore),
+ * e.g. 2900 Gjeld til kunde or 1922 Direktebetaling. It may need its own booking, so it gets a note.
+ * New result accounts don't get here: `toReport` stops on them.
+ */
+export function verifyKnownAccounts(
+  balance: Movements,
+  config: {
+    ignore: string[]
+    reconcile: VatAccounts & { payoutAccounts: string[]; balanceAccounts?: string[] }
+  },
+): Check[] {
+  const { payoutAccounts, balanceAccounts = [], outputVat, inputVat } = config.reconcile
+  const known = new Set([
+    ...config.ignore,
+    ...payoutAccounts,
+    ...balanceAccounts,
+    ...Object.values(outputVat),
+    ...Object.values(inputVat),
+  ])
+  return [...balance]
+    .filter(([account, net]) => net !== 0 && !known.has(account))
+    .map(([account, net]) => {
+      const meaning = CHECKIN_ACCOUNTS[account]
+      return {
+        label: `Ny konto i bilaget: ${account}${meaning ? ` ${meaning.split(":")[0]}` : ""}`,
+        expected: 0,
+        actual: net,
+        ok: true,
+        detail: `Netto endring ${formatNok(net)}`,
+        note: `${meaning ? `${meaning}. ` : ""}Oppskriften kjenner ikke kontoen, så den føres ikke. Avklar med regnskapsfører før du fører.`,
+      }
+    })
+}
+
+/**
+ * The report is read as one event: every sale becomes one line, e.g. "TDC 2026". A report that
+ * names two years of the event (sales for next year started early) would mix them in one booking.
+ * Other events, e.g. the partner stand, are fine as long as they don't name another year.
+ */
+export function verifyEvent(text: string[] | undefined, event: string | undefined): Check[] {
+  if (!text || !event) return []
+  const name = event.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const pattern = new RegExp(`(?<![\\p{L}\\d])${name}\\s*(\\d{4})(?!\\d)`, "giu")
+  const years = [...new Set(text.flatMap((t) => [...t.matchAll(pattern)].map((m) => m[1]!)))].sort()
+  const found = years.map((y) => `${event} ${y}`)
+  const label = `Bare ett ${event}-arrangement i bilaget`
+  if (years.length === 0) {
+    return [
+      {
+        label,
+        expected: 0,
+        actual: 0,
+        ok: true,
+        detail: `Fant ikke «${event} ÅÅÅÅ»`,
+        note: "Bilaget nevner ikke arrangementet, så det er ikke kontrollert at bare ett år er med.",
+      },
+    ]
+  }
+  return [
+    {
+      label,
+      expected: 1,
+      actual: years.length,
+      ok: years.length === 1,
+      detail: found.join(", "),
+      hint: `Bilaget har salg for flere år. Verktøyet fører alt som ett salg og kan ikke skille ${found.join(" og ")} ennå.`,
     },
   ]
 }

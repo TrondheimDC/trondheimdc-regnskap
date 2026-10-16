@@ -276,6 +276,7 @@ describe("prepare", () => {
     expect(p.plan.sale.gross).toBe(SALE_GROSS)
     expect(p.plan.purchase.gross).toBe(PURCHASE_GROSS)
     expect(p.checks.every((c) => c.ok)).toBe(true)
+    expect(p.checks.filter((c) => c.note)).toEqual([])
   })
 
   test("a report without payouts has no transfers", async () => {

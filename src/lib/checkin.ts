@@ -43,6 +43,40 @@ export interface ParsedReport {
    * Only filled for PDFs.
    */
   boxes: Record<string, Box>
+  /** Every row on every page, cells joined by spaces. Only filled for PDFs. */
+  text?: string[]
+}
+
+/**
+ * Checkin's standard chart of accounts, with what each account means. Used to explain an account
+ * in the report that the recipe doesn't know. Source:
+ * https://www.checkinevent.com/helpcenter/regnskap-i-checkin-101-0
+ */
+export const CHECKIN_ACCOUNTS: Record<string, string> = {
+  "1500": "Kundefordringer: salg som ikke er betalt ennå",
+  "1920": "Bankinnskudd: det som er utbetalt til banken",
+  "1921": "Bankinnskudd Checkin: saldoen vår hos Checkin",
+  "1922": "Direktebetaling: betalt direkte til oss, ikke via Checkin",
+  "2701": "Utgående mva, høy sats",
+  "2704": "Utgående mva, lav sats, f.eks. mat",
+  "2711": "Inngående mva, høy sats: mva på gebyrer fra Checkin",
+  "2900": "Gjeld til kunde: en deltaker har betalt for mye",
+  "2965": "Forskuddsbetalt inntekt: Checkins periodisering frem til arrangementet",
+  "3000": "Salgsinntekt, mva-pliktig",
+  "3200": "Salgsinntekt, unntatt mva",
+  "3990": "Periodisert salgsinntekt: Checkins periodisering, motpost til 2965",
+  "4300": "Gebyrer til Checkin med mva",
+  "4335": "Gebyrer til Checkin uten mva",
+  "7745": "Øreavrunding: en deltaker har betalt noen øre for mye eller for lite",
+  "7770": "Internasjonalt overføringsgebyr",
+  "7800": "Tap på fordringer",
+  "7835": "Tap på fordringer, ikke fradragsberettiget",
+}
+
+/** "7745 (Øreavrunding: …)" when Checkin documents the account, otherwise just the number. */
+export function describeCheckinAccount(account: string): string {
+  const meaning = CHECKIN_ACCOUNTS[account]
+  return meaning ? `${account} (${meaning})` : account
 }
 
 /** A value's rectangle on a page, in PDF units (origin bottom-left), for highlighting. */
@@ -294,7 +328,8 @@ export async function parseReportPdf(data: Uint8Array): Promise<ParsedReport> {
       "Fant ingen resultatkontoer (3000–8999) på sammendragssiden. Er dette et regnskapsbilag fra Checkin?",
     )
   }
-  return { ...report, month }
+  const text = pages.flatMap((rows) => rows.map((row) => row.map((c) => c.text).join(" ")))
+  return { ...report, month, text }
 }
 
 /** "3000=427521.63,4300=5163.44" -> movements (positive numbers, natural direction). */
@@ -330,7 +365,7 @@ export function toReport(month: string, movements: Movements, config: Config): C
   if (unclaimed.length > 0) {
     throw new Error(
       `Bilaget har beløp på Checkin-kontoer som oppskriften ikke dekker: ` +
-        `${unclaimed.map(([a, net]) => `${a} (${net / 100})`).join(", ")}. ` +
+        `${unclaimed.map(([a, net]) => `${describeCheckinAccount(a)}: ${net / 100}`).join(", ")}. ` +
         `Legg dem til i "from" på en linje eller i "ignore" i regnskap.config.json.`,
     )
   }

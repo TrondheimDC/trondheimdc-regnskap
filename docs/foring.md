@@ -57,6 +57,8 @@ Checkin sender regnskapsbilaget som PDF til Fiken-innboksen. Verktøyet henter P
    - Beregnet mva mot Checkins mva-kontoer (2701/2711).
    - Utbetalingsoversikten mot 1920.
    - Salg minus kjøp mot netto endring på 1500 + 1920 + 1921.
+   - At bilaget bare nevner ett år av arrangementet (`event`, f.eks. «TDC 2026»), se [Begrensninger](#begrensninger).
+   - Nye balansekontoer i bilaget gir en merknad, se [Kontoplanen](#kontoplanen).
 
    Verktøyet fører ikke på mva-kontoene selv. Fiken fører mva ut fra mva-typen på linjen, som i den manuelle oppskriften. 2701/2711 er Checkins kontoer i PDF-en.
 
@@ -169,7 +171,7 @@ Alle linjer føres på vår egen konto (`sale.account` / `purchase.account`), ua
 
 Checkin-kontonumrene i `from` brukes bare til å finne riktig beløp i rapporten. Flere Checkin-kontoer kan slås sammen på én linje, f.eks. `"from": ["4300", "4302", "4303"]`.
 
-Kontoer i rapporten som ikke er dekket av oppskriften stopper kjøringen. De må enten legges til i en `from` eller i `ignore`.
+Resultatkontoer (3000–8999) i rapporten som ikke er dekket av oppskriften stopper kjøringen. De må enten legges til i en `from` eller i `ignore`. Feilmeldingen forklarer kontoen hvis den er i Checkins kontoplan.
 
 ### Checkin som kunde og leverandør (reskontro)
 
@@ -216,9 +218,14 @@ Kontonumrene i bilaget er Checkins standard kontoplan. Vi bruker dem bare for å
 | 1920 Bankinnskudd | Det som er utbetalt til banken i perioden | Fri postering 1960:10001 → 1920:10001. Brukes i utbetalingskontrollen |
 | 1921 Bankinnskudd Checkin | Saldoen vår hos Checkin | `checkinAccount` (1960:10001). Brukes i saldokontrollen |
 | 1500 Kundefordringer | Fakturerte billetter som ikke er betalt | Ligger på `checkinAccount`. Brukes i saldokontrollen |
-| 3990 / 2965 Periodisert salgsinntekt / forskuddsbetalt inntekt | Checkins periodisering frem til arrangementet | Står i `ignore`. Se [Periodisering](#periodisering) |
+| 3990 / 2965 Periodisert salgsinntekt / forskuddsbetalt inntekt | Checkins periodisering frem til arrangementet | Begge står i `ignore`. Se [Periodisering](#periodisering) |
 
-Kontoer som ikke er i oppskriften stopper kjøringen (se [Oppskriften](#oppskriften)). Disse har vi ikke sett ennå, men de finnes i Checkins kontoplan:
+Nye kontoer flagges før noe føres:
+
+- **Resultatkontoer** (f.eks. 3200, 7745) stopper kjøringen, se [Oppskriften](#oppskriften).
+- **Balansekontoer** (f.eks. 2900, 1922) gir en merknad i kontrollene, med Checkins forklaring av kontoen. En balansekonto er ny hvis den ikke står i `reconcile` eller `ignore`. Merknaden stopper ikke føringen, men kontrollen av salg minus kjøp vil som regel også avvike.
+
+Disse har vi ikke sett ennå, men de finnes i Checkins kontoplan:
 
 - **3200** salg unntatt mva og **2704** utgående mva, lav sats (f.eks. mat): trenger en egen salgslinje med riktig mva-type.
 - **2900** gjeld til kunde (deltaker har betalt for mye): trenger egen vurdering.
@@ -301,13 +308,14 @@ Etter `--mode create` hentes saldoen på nytt for å bekrefte at Fiken har ført
 "reconcile": { "payoutAccounts": ["1920"], "balanceAccounts": ["1500", "1921"], "outputVat": { "HIGH": "2701" }, "inputVat": { "HIGH": "2711" } }
 ```
 
-I Checkins regnskapsbilag er 1500 kundefordringer (fakturerte billetter som ikke er betalt ennå) og 1921 penger Checkin/CheckinPay holder for oss. 3990 er Checkins egen periodisering, som vi ikke følger, og står derfor i `ignore`. Se [Checkins rapporter og kontoplan](#checkins-rapporter-og-kontoplan).
+I Checkins regnskapsbilag er 1500 kundefordringer (fakturerte billetter som ikke er betalt ennå) og 1921 penger Checkin/CheckinPay holder for oss. 3990 og 2965 er Checkins egen periodisering, som vi ikke følger, og står derfor i `ignore`. Se [Checkins rapporter og kontoplan](#checkins-rapporter-og-kontoplan).
 
 ## Begrensninger
 
 - **Ett arrangement om gangen:** Verktøyet leser totalene på side 2, ikke per arrangement på side 3. Alt salg i måneden føres derfor som ett salg, f.eks. «TDC 2026». Det stemmer så lenge bare ett arrangement selger billetter om gangen. Starter billettsalget for neste år før årets konferanse er holdt, blandes f.eks. 2026 og 2027 sammen i samme føring og i samme periodisering.
   For å støtte det må verktøyet lese hvert arrangement for seg fra side 3 og føre ett salg og ett kjøp per arrangement, hver med sin egen periodisering. Flere føringer er ikke noe problem når det skjer automatisk.
   Inntil da: ikke start salget for neste år så lenge det fortsatt er bevegelser på årets arrangement, som salg, refusjoner eller gebyrer.
+  Kontrollen «Bare ett TDC-arrangement i bilaget» feiler hvis bilaget nevner mer enn ett år, f.eks. TDC 2026 og TDC 2027. Andre arrangementer, som partnerstanden, er greit så lenge de ikke har et annet år i navnet. Navnet står i `event` i konfigurasjonen. Finner kontrollen ikke navnet i det hele tatt, gir den en merknad.
 - **PDF-leseren:** Den er testet mot et ekte regnskapsbilag (september 2026). Den finner sammendragssiden med *Resultat*, rader som starter med `<konto> - <navn>` og beløpet under *Netto endring*. Hvis Checkin endrer oppsettet, vil kontrollene i steg 2 feile.
 - **Banklinjer:** Fiken-API-et har ingen banklinjer eller avstemming. Den fri posteringen må derfor kobles til banklinjen i Superføring for hånd, se [Utbetalinger](#utbetalinger-fri-posteringer).
 - **Dato:** Fiken anbefaler å datere overføringer fra betalingstjenester med datoen pengene kom inn på banken. Verktøyet bruker Checkins «Bokført»-dato. Hvis en utbetaling krysser et månedsskifte, kan månedens bankavstemming på 1920 avvike. Se [TODO.md](TODO.md).

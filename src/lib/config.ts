@@ -92,8 +92,13 @@ export const Config = z
         inputVat: z.partialRecord(VatType, CheckinAccount).default({ HIGH: "2711" }),
       })
       .prefault({}),
-    /** Checkin accounts in the report that we deliberately don't book. */
+    /** Checkin accounts in the report that we deliberately don't book, result or balance. */
     ignore: z.array(CheckinAccount).default([]),
+    /**
+     * Event name Checkin prints before the year, e.g. "TDC" for "TDC 2026". The report is read as
+     * one event, so a report naming two years (e.g. TDC 2026 and TDC 2027) fails a check.
+     */
+    event: z.string().min(1).optional(),
     inbox: z.object({
       /** Substring identifying the monthly accounting report, e.g. "Regnskapsbilag". */
       reportName: z.string().min(1),
