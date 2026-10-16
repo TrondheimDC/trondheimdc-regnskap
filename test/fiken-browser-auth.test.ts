@@ -28,6 +28,29 @@ const tokenResponse = (body: object, status = 200) =>
     headers: { "Content-Type": "application/json" },
   })
 
+describe("completeLogin", () => {
+  beforeEach(() => {
+    store.set("fiken.pending-login", JSON.stringify({ verifier: "v", state: "s", returnTo: "/" }))
+  })
+
+  it("reports Fiken's error even when the redirect has no state", async () => {
+    const { completeLogin } = await import("../src/lib/fiken-browser-auth.ts")
+
+    await expect(completeLogin(new URLSearchParams("error=access_denied"))).rejects.toThrow(
+      "avbrutt eller avslått",
+    )
+    expect(store.has("fiken.pending-login")).toBe(false)
+  })
+
+  it("passes on Fiken's description for other errors", async () => {
+    const { completeLogin } = await import("../src/lib/fiken-browser-auth.ts")
+
+    await expect(
+      completeLogin(new URLSearchParams("error=server_error&error_description=Noe+gikk+galt")),
+    ).rejects.toThrow("Noe gikk galt")
+  })
+})
+
 describe("browserAuth", () => {
   it("spends the refresh token once when token() and refresh() run together", async () => {
     const fetch = vi.fn(async () =>

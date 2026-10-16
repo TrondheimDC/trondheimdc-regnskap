@@ -73,6 +73,16 @@ export async function startLogin(): Promise<void> {
 export async function completeLogin(params: URLSearchParams): Promise<string> {
   const pending = sessionStorage.getItem(PENDING_KEY)
   sessionStorage.removeItem(PENDING_KEY)
+  // Fiken's own reason comes first: an error redirect may carry no state, and
+  // validateAuthResponse would report that instead.
+  const error = params.get("error")
+  if (error) {
+    throw new Error(
+      error === "access_denied"
+        ? "Innloggingen ble avbrutt eller avslått i Fiken."
+        : `Fiken avviste innloggingen: ${params.get("error_description") ?? error}`,
+    )
+  }
   if (!pending) throw new Error("Fant ingen påbegynt innlogging i denne fanen. Prøv igjen.")
   const { verifier, state, returnTo } = JSON.parse(pending)
 
