@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 import { type ReactNode, useMemo, useState } from "react"
 import { toast } from "sonner"
+import { AccountPicker } from "@/components/account-picker"
 import { MarkedAmount, MarkProvider, MarkRow, useMarksFor } from "@/components/marks"
 import { PdfPreview } from "@/components/pdf-preview"
 import { Card, CheckRow, SectionLabel, StatusBadge } from "@/components/review-screen"
@@ -621,9 +622,10 @@ function CategoryCard({
           <label htmlFor={`account-${category}`} className="text-sm text-[var(--color-fg-base)]/70">
             Konto i Fiken
           </label>
-          <AccountSelect
+          <AccountPicker
             id={`account-${category}`}
             value={account}
+            suggested={def?.account}
             accounts={fikenAccounts}
             onChange={onAccount}
           />
@@ -791,35 +793,6 @@ function CategorySelect({
       {hotel.categories.map((c) => (
         <option key={c.id} value={c.id}>
           {c.label}
-        </option>
-      ))}
-    </select>
-  )
-}
-
-function AccountSelect({
-  id,
-  value,
-  accounts,
-  onChange,
-}: {
-  id: string
-  value: string
-  accounts: Account[]
-  onChange: (account: string) => void
-}) {
-  const missing = !accounts.some((a) => a.code === value)
-  return (
-    <select
-      id={id}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={cn(selectClass, "max-w-[18rem]", missing && "border-[var(--color-bg-danger)]")}
-    >
-      {missing ? <option value={value}>{value} – finnes ikke i Fiken</option> : null}
-      {accounts.map((a) => (
-        <option key={a.code} value={a.code}>
-          {a.code} {a.name ?? ""}
         </option>
       ))}
     </select>

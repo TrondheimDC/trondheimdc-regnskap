@@ -494,3 +494,21 @@ describe("Fiken", () => {
     expect(calls.map((c) => c.method)).toEqual(["createPurchaseDraft", "attachEhfDocument"])
   })
 })
+
+describe("chart of accounts", () => {
+  test("groups accounts by class, in account order", async () => {
+    const { groupAccounts } = await import("../src/lib/accounts.ts")
+    const groups = groupAccounts([
+      { code: "7350", name: "Representasjon" },
+      { code: "4500", name: "Fremmedytelser" },
+      { code: "7140", name: "Reisekostnad" },
+      { code: "6300", name: "Leie lokale" },
+    ])
+    expect(groups.map((g) => [g.klass, g.accounts.map((a) => a.code)])).toEqual([
+      ["4", ["4500"]],
+      ["6", ["6300"]],
+      ["7", ["7140", "7350"]],
+    ])
+    expect(groups[0]?.label).toBe("4xxx · Varekostnad")
+  })
+})
