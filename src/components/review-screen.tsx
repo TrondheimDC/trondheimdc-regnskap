@@ -29,7 +29,7 @@ import {
   useMarks,
   useMarksFor,
 } from "@/components/marks"
-import { PdfPreview } from "@/components/pdf-preview"
+import { PagedPdfPreview } from "@/components/pdf-preview"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -79,7 +79,7 @@ import {
   payoutKey,
   vatKey,
 } from "@/lib/marks"
-import { renderPdfPage } from "@/lib/pdf-render"
+import { pdfPageCount, renderPdfPage } from "@/lib/pdf-render"
 import { formatNok } from "@/lib/plan"
 import { cn } from "@/lib/utils"
 import { type Check, explainRounding, isRoundingCheck, type RoundingCorrection } from "@/lib/verify"
@@ -102,14 +102,15 @@ async function analyze(client: Fiken, selection: Selection) {
 
   const prepared = prepare(source, config)
   const summaryPage = Math.min(...Object.values(source.boxes).map((b) => b.page))
-  const [state, preview] = await Promise.all([
+  const [state, preview, pageCount] = await Promise.all([
     inspect(client, prepared),
     // The page is only an aid for checking; the review works without it.
     Number.isFinite(summaryPage)
       ? renderPdfPage(pdf, summaryPage).catch(() => undefined)
       : Promise.resolve(undefined),
+    pdfPageCount(pdf).catch(() => 1),
   ])
-  return { prepared, ...state, pdf, preview }
+  return { prepared, ...state, pdf, preview, pageCount }
 }
 
 /**
@@ -483,7 +484,7 @@ function Review({
   onBook: (mode: BookMode) => void
   disabled: boolean
 }) {
-  const { prepared, fiken, preview } = data
+  const { prepared, fiken } = data
   const checks = [...prepared.checks, ...fiken.checks]
   const failed = checks.filter((c) => !c.ok).length
   const blocked = fiken.blockers.length > 0
@@ -491,7 +492,7 @@ function Review({
   const canBook = !blocked && anything && (failed === 0 || override) && !disabled
 
   return (
-    <ReviewLayout prepared={prepared} preview={preview}>
+    <ReviewLayout prepared={prepared} pdf={data}>
       <Totals prepared={prepared} blocked={blocked} failed={failed} />
 
       <div className="flex flex-col gap-3">
@@ -658,16 +659,25 @@ function PartsCard({
 /** The bilag with its marks beside the cards; the PDF goes first on mobile. */
 function ReviewLayout({
   prepared,
-  preview,
+  pdf: { pdf, preview, pageCount },
   children,
 }: {
   prepared: Prepared
-  preview: Analysis["preview"]
+  pdf: Pick<Analysis, "pdf" | "preview" | "pageCount">
   children: ReactNode
 }) {
   const marks = useMemo(() => buildMarks(prepared, config), [prepared])
   const [pdfOpen, setPdfOpen] = useState(true)
-  const revealPdf = useMemo(() => () => setPdfOpen(true), [])
+  const [page, setPage] = useState(preview?.page ?? 0)
+  // A number clicked in the cards turns to its page.
+  const revealPdf = useMemo(
+    () => (n: number) => {
+      setPdfOpen(true)
+      const mark = marks.find((m) => m.n === n)
+      if (mark) setPage(mark.box.page)
+    },
+    [marks],
+  )
 
   return (
     <MarkProvider marks={marks} onReveal={revealPdf}>
@@ -675,9 +685,13 @@ function ReviewLayout({
         <div className="flex min-w-0 flex-col gap-3 lg:order-2 lg:sticky lg:top-6 lg:max-h-[calc(100dvh-3rem)] lg:overflow-y-auto">
           <SectionLabel>Bilaget</SectionLabel>
           {preview ? (
-            <PdfPreview
-              image={preview}
-              marks={marks.filter((m) => m.box.page === preview.page)}
+            <PagedPdfPreview
+              pdf={pdf}
+              first={preview}
+              count={pageCount}
+              page={page}
+              onPage={setPage}
+              marks={marks}
               open={pdfOpen}
               onOpenChange={setPdfOpen}
             />
@@ -713,7 +727,7 @@ interface RoundingAction {
  * written from here.
  */
 function AuditReview({
-  data: { prepared, audit, preview },
+  data,
   companyName,
   rounding,
 }: {
@@ -721,6 +735,7 @@ function AuditReview({
   companyName: string
   rounding: RoundingAction
 }) {
+  const { prepared, audit } = data
   const checks = [...prepared.checks, ...audit.checks]
   const failed = checks.filter((c) => !c.ok).length
   const sides = [
@@ -731,7 +746,7 @@ function AuditReview({
   ]
 
   return (
-    <ReviewLayout prepared={prepared} preview={preview}>
+    <ReviewLayout prepared={prepared} pdf={data}>
       <Totals prepared={prepared} blocked={false} failed={failed} />
 
       <div className="flex flex-col gap-3">

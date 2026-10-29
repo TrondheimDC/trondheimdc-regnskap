@@ -41,6 +41,16 @@ export function toPageRect(
   }
 }
 
+/** Number of pages in the PDF. */
+export async function pdfPageCount(data: Uint8Array): Promise<number> {
+  const pdf = await getDocumentProxy(data.slice())
+  try {
+    return pdf.numPages
+  } finally {
+    await pdf.loadingTask.destroy()
+  }
+}
+
 /**
  * Renders `page` (0-based) at `scale` device pixels per PDF unit. pdf.js detaches the buffer it
  * gets, so it is given a copy and `data` stays usable.

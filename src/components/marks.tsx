@@ -31,7 +31,8 @@ export function MarkProvider({
   children,
 }: {
   marks: Mark[]
-  onReveal: () => void
+  /** Opens the PDF where mark `n` is (e.g. its page). */
+  onReveal: (n: number) => void
   children: ReactNode
 }) {
   const [hovered, setActive] = useState<number[]>([])
@@ -43,7 +44,7 @@ export function MarkProvider({
   const byKey = useMemo(() => new Map(marks.map((m) => [m.key, m])), [marks])
   const reveal = useCallback(
     (n: number) => {
-      onReveal()
+      onReveal(n)
       setPinned(n)
       clearTimeout(unpin.current)
       unpin.current = setTimeout(() => setPinned(undefined), 2500)

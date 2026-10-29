@@ -20,7 +20,7 @@ import { type ReactNode, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { AccountPicker } from "@/components/account-picker"
 import { MarkedAmount, MarkProvider, MarkRow, useMarksFor } from "@/components/marks"
-import { PdfPreview } from "@/components/pdf-preview"
+import { PagedPdfPreview } from "@/components/pdf-preview"
 import { Card, CheckRow, SectionLabel, StatusBadge } from "@/components/review-screen"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
@@ -62,7 +62,7 @@ import {
   prepareHotel,
 } from "@/lib/hotel-booking"
 import { buildHotelMarks } from "@/lib/marks"
-import { renderPdfPage } from "@/lib/pdf-render"
+import { pdfPageCount, renderPdfPage } from "@/lib/pdf-render"
 import { formatNok } from "@/lib/plan"
 import { cn } from "@/lib/utils"
 
@@ -81,12 +81,13 @@ async function analyze(client: Fiken, hotel: HotelConfig, selection: HotelSelect
     description:
       selection.kind === "ehf" ? `EHF ${selection.doc.ehfDocumentId}` : selection.file.name,
   }
-  const [fiken, preview] = await Promise.all([
+  const [fiken, preview, pageCount] = await Promise.all([
     inspectHotel(client, hotel, source, { attach: true }),
     // The page is only an aid for checking; the review works without it.
     renderPdfPage(pdf, 0).catch(() => undefined),
+    pdfPageCount(pdf).catch(() => 1),
   ])
-  return { source, fiken, preview }
+  return { source, fiken, pdf, preview, pageCount }
 }
 
 type Analysis = Awaited<ReturnType<typeof analyze>>
@@ -319,7 +320,7 @@ function ConfirmDialog({
 
 function HotelReview({
   hotel,
-  data: { fiken, preview, source },
+  data: { fiken, pdf, preview, pageCount, source },
   prepared,
   moves,
   onMove,
@@ -351,7 +352,16 @@ function HotelReview({
   const canBook = !blocked && (failed === 0 || override) && !disabled
   const marks = useMemo(() => buildHotelMarks(source.invoice), [source.invoice])
   const [pdfOpen, setPdfOpen] = useState(true)
-  const revealPdf = useMemo(() => () => setPdfOpen(true), [])
+  const [page, setPage] = useState(0)
+  // A number clicked in the cards turns to its page.
+  const revealPdf = useMemo(
+    () => (n: number) => {
+      setPdfOpen(true)
+      const mark = marks.find((m) => m.n === n)
+      if (mark) setPage(mark.box.page)
+    },
+    [marks],
+  )
   const groups = useMemo(() => groupByBill(plan.placements), [plan.placements])
   const moved = Object.keys(moves).length
 
@@ -361,7 +371,17 @@ function HotelReview({
         <div className="flex min-w-0 flex-col gap-3 lg:order-2 lg:sticky lg:top-6 lg:max-h-[calc(100dvh-3rem)] lg:overflow-y-auto">
           <SectionLabel>Fakturaen</SectionLabel>
           {preview ? (
-            <PdfPreview image={preview} marks={marks} open={pdfOpen} onOpenChange={setPdfOpen} />
+            <PagedPdfPreview
+              pdf={pdf}
+              first={preview}
+              count={pageCount}
+              page={page}
+              onPage={setPage}
+              marks={marks}
+              open={pdfOpen}
+              onOpenChange={setPdfOpen}
+              title="Fakturaen"
+            />
           ) : (
             <Alert>
               <FileText aria-hidden />
