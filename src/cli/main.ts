@@ -24,8 +24,23 @@ import {
   type ReportSource,
 } from "../lib/booking.ts"
 import { parseAmountsArg, parseReportPdf } from "../lib/checkin.ts"
-import { type Config, Month, parseConfig } from "../lib/config.ts"
+import { type Config, type HotelConfig, Month, parseConfig } from "../lib/config.ts"
 import { Fiken, type InboxDocument } from "../lib/fiken.ts"
+import {
+  groupByBill,
+  type HotelChoices,
+  parseAccountsArg,
+  parseHotelInvoicePdf,
+  parseMovesArg,
+} from "../lib/hotel.ts"
+import {
+  bookHotel,
+  type HotelSource,
+  hotelBlockers,
+  inspectHotel,
+  listHotelInvoices,
+  prepareHotel,
+} from "../lib/hotel-booking.ts"
 import { formatMonthNo, formatNok } from "../lib/plan.ts"
 import { type Check, explainRounding, isRoundingCheck } from "../lib/verify.ts"
 import { createAuth, hasCredentials, login, logout } from "./auth.ts"
@@ -41,8 +56,12 @@ Commands:
                       or --inbox-doc (used documents too). If the month was booked with
                       Fiken's VAT and the Checkin account is a few øre off, --mode create
                       books an øreavrunding fri postering (after confirmation).
+  hotell [file.pdf]   Book the hotel's conference invoice as one supplier purchase (unpaid,
+                      with due date and KID): a line per category and VAT rate.
+                      Without a file the hotel's EHF is fetched from Fiken.
   companies           List Fiken companies the token can access
   accounts            List bank accounts in Fiken (to find account codes)
+  chart [range]       List the chart of accounts in Fiken (default 4000-8999)
   inbox               List unused documents in the Fiken inbox
   contacts [name]     List Fiken contacts matching a name (default "checkin")
 
@@ -55,6 +74,10 @@ Options:
   --amounts <list>    report: net amounts per Checkin account instead of the PDF,
                       e.g. "3000=427521.63,4300=5163.44,4335=24711.53"
   --inbox-doc <id>    Fiken inbox document to read/attach (default: auto-detect)
+  --ehf <id>          hotell: Fiken EHF document to read/attach (default: the hotel's unprocessed one)
+  --move <list>       hotell: move bills or lines to another category, comma-separated,
+                      e.g. "NO121S0000033=servering,#57=crew"
+  --account <list>    hotell: account per category instead of the recipe's, e.g. "crew=5990"
   --no-attach         Do not attach any inbox document
   --offline           dry-run: skip all calls to Fiken (needs a file or --amounts)
   --company <slug>    Fiken company (default: companySlug in the config, if you have access)
@@ -76,6 +99,9 @@ const { values: rawOpts, positionals } = parseArgs({
     month: { type: "string" },
     amounts: { type: "string" },
     "inbox-doc": { type: "string" },
+    ehf: { type: "string" },
+    move: { type: "string" },
+    account: { type: "string" },
     "no-attach": { type: "boolean", default: false },
     offline: { type: "boolean", default: false },
     company: { type: "string" },
@@ -95,6 +121,9 @@ const Options = z.object({
   month: Month.optional(),
   amounts: z.string().optional(),
   "inbox-doc": z.coerce.number().int().positive().optional(),
+  ehf: z.coerce.number().int().positive().optional(),
+  move: z.string().optional(),
+  account: z.string().optional(),
   "no-attach": z.boolean(),
   offline: z.boolean(),
   company: z.string().min(1).optional(),
@@ -189,7 +218,7 @@ function printMapping(rows: MappingRow[]) {
 /** Prints checks with ✓/✗ and returns whether all passed. */
 function printChecks(checks: Check[]): boolean {
   for (const c of checks) {
-    const amounts = `${c.source ?? "beregnet"} ${formatNok(c.expected)}, Checkin ${formatNok(c.actual)}`
+    const amounts = `${c.source ?? "beregnet"} ${formatNok(c.expected)}, ${c.reference ?? "Checkin"} ${formatNok(c.actual)}`
     const text = `${c.label}: ${c.detail ?? amounts}`
     if (c.ok && c.note) {
       console.log(`  ! ${text}`)
@@ -529,6 +558,167 @@ async function check() {
   if (!othersOk) process.exitCode = 1
 }
 
+/** Reads the hotel invoice from a local PDF, an inbox document, or the hotel's EHF in Fiken. */
+async function readHotelSource(
+  client: Fiken | undefined,
+  hotel: HotelConfig,
+): Promise<HotelSource> {
+  const file = args[0]
+  if (file) {
+    const data = await readFile(file).catch(() => fail(`File ${file} not found`))
+    return { invoice: await parseHotelInvoicePdf(new Uint8Array(data)), description: file }
+  }
+  if (!client)
+    fail("Give a PDF file, or log in with `pnpm foring login` to read the EHF from Fiken")
+  if (opts["inbox-doc"]) {
+    const doc = await findInboxDocument(client, "")
+    const invoice = await parseHotelInvoicePdf(await client.downloadInboxDocument(doc))
+    return { invoice, doc, description: `Fiken-innboks ${doc.documentId} "${doc.name}"` }
+  }
+  const docs = await listHotelInvoices(client, hotel)
+  const candidates = opts.ehf
+    ? docs.filter((d) => d.ehfDocumentId === opts.ehf)
+    : docs.filter((d) => d.status === "unprocessed")
+  const ehf = candidates[0]
+  if (!ehf || candidates.length > 1) {
+    const list = docs
+      .map(
+        (d) =>
+          `  ${d.ehfDocumentId}  ${d.issueDate ?? ""}  faktura ${d.invoiceNumber ?? "?"}  ${formatNok(d.gross ?? 0)}  (${d.status ?? ""})`,
+      )
+      .join("\n")
+    fail(
+      opts.ehf
+        ? `EHF ${opts.ehf} from the hotel not found in Fiken:\n${list}`
+        : candidates.length === 0
+          ? `No unprocessed EHF from org.nr. ${hotel.supplier.organizationNumber} in Fiken. Use --ehf <id> or a PDF file.${list ? `\n${list}` : ""}`
+          : `Several EHFs from the hotel, pick one with --ehf <id>:\n${list}`,
+    )
+  }
+  const invoice = await parseHotelInvoicePdf(await client.downloadEhfDocument(ehf))
+  return {
+    invoice,
+    ehf,
+    description: `EHF ${ehf.ehfDocumentId} fra ${ehf.supplierName ?? "hotellet"}`,
+  }
+}
+
+async function hotelInvoice() {
+  const config = await loadConfig(opts.config)
+  const hotel = config.hotel
+  if (!hotel) fail(`No "hotel" recipe in ${opts.config}`)
+  const client =
+    opts.offline || (mode === "dry-run" && !(await hasCredentials()))
+      ? undefined
+      : await fiken(config)
+
+  const source = await readHotelSource(client, hotel)
+  const choices: HotelChoices = {
+    moves: opts.move ? parseMovesArg(opts.move) : {},
+    accounts: opts.account ? parseAccountsArg(opts.account) : {},
+  }
+  const prepared = prepareHotel(source, hotel, choices)
+  const { invoice } = source
+  const { plan } = prepared
+
+  console.log(`Hotellfaktura ${invoice.number} → Fiken (${mode})`)
+  console.log(`Kilde: ${source.description}`)
+  console.log(
+    `${invoice.supplierName ?? "Ukjent leverandør"} (org.nr. ${invoice.supplierOrgNr ?? "?"}), fakturadato ${invoice.date}, forfall ${invoice.dueDate ?? "?"}, KID ${invoice.kid ?? "–"}`,
+  )
+  console.log(`Fakturatotal ${formatNok(invoice.total)}, ${invoice.lines.length} linjer`)
+
+  // Each category with the bills and lines in it, so they can be moved with --move.
+  const groups = groupByBill(plan.placements)
+  const ruleText = (by: (typeof plan.placements)[number]["by"]) =>
+    by === "line"
+      ? "flyttet"
+      : by === "bill"
+        ? "regning flyttet"
+        : by === "none"
+          ? ""
+          : `regel ${by.rule + 1}`
+  for (const category of [...hotel.categories.map((c) => c.id), undefined]) {
+    const label = category
+      ? hotel.categories.find((c) => c.id === category)?.label
+      : "Uten kategori (stopper føringen)"
+    const inCategory = groups
+      .map((g) => ({ ...g, placements: g.placements.filter((p) => p.category === category) }))
+      .filter((g) => g.placements.length > 0)
+    if (inCategory.length === 0) continue
+    const sum = inCategory.flatMap((g) => g.placements).reduce((s, p) => s + p.line.gross, 0)
+    console.log(`\n${category ? `[${category}] ` : ""}${label}  ${formatNok(sum)}`)
+    // Room bills name a guest; they are only counted.
+    const rooms = inCategory.filter((g) => g.section === "Stay")
+    if (rooms.length > 0) {
+      const roomSum = rooms.flatMap((g) => g.placements).reduce((s, p) => s + p.line.gross, 0)
+      console.log(`  Stay: ${rooms.length} regninger, ${formatNok(roomSum)}`)
+    }
+    for (const g of inCategory.filter((g) => g.section !== "Stay")) {
+      console.log(`  ${g.bill ?? "(uten regning)"}  ${g.section}`)
+      for (const p of g.placements)
+        console.log(
+          `    #${String(p.line.n).padEnd(4)} ${p.line.text.padEnd(40)} ${formatNok(p.line.gross).padStart(16)}  ${ruleText(p.by)}`,
+        )
+    }
+  }
+
+  printLines(
+    `\nKjøp fra ${invoice.supplierName ?? "hotellet"}, referanse "${plan.reference}", ikke betalt`,
+    plan.lines.map((l) => ({ ...l, vatType: l.deduct ? l.vatType : `${l.vatType}, uten fradrag` })),
+    plan.gross,
+  )
+
+  console.log("\nKontroller mot fakturaen")
+  let checksOk = printChecks(prepared.checks)
+
+  if (!client) {
+    console.log("\n(Ingen kontakt med Fiken: ikke innlogget eller --offline er satt)")
+    return
+  }
+
+  const state = await inspectHotel(client, hotel, source, { attach: !opts["no-attach"] })
+  console.log(
+    `\nFiken: ${state.company.name} (${state.company.slug})${state.company.testCompany ? " [testselskap]" : ""}`,
+  )
+  if (state.supplier)
+    step(
+      `Leverandør: ${state.supplier.name} (${state.supplier.accountCode ?? state.supplier.contactId})`,
+    )
+  if (state.ehf)
+    step(`Vedlegg: EHF ${state.ehf.ehfDocumentId} (faktura ${state.ehf.invoiceNumber ?? "?"})`)
+  else if (state.doc) step(`Vedlegg: ${state.doc.documentId} "${state.doc.name}"`)
+  const names = new Map(state.accounts.map((a) => [a.code, a.name]))
+  for (const account of new Set(plan.lines.map((l) => l.account)))
+    if (names.has(account)) step(`Konto ${account} ${names.get(account) ?? ""}`)
+  const blockers = hotelBlockers(prepared, state)
+  for (const b of blockers) warn(b)
+  checksOk = checksOk && blockers.length === 0
+  if (blockers.length > 0) fail("Kan ikke føre, se ✗ over.")
+
+  if (mode === "dry-run") {
+    console.log("\nDry run: ingenting er skrevet til Fiken. Bruk --mode draft eller --mode create.")
+    return
+  }
+
+  const what = `${mode === "draft" ? "Lag kjøpsutkast" : "Bokfør kjøpet"} på ${formatNok(plan.gross)} i Fiken`
+  if (!(await confirm(what, checksOk))) {
+    console.log("Avbrutt, ingenting er skrevet til Fiken.")
+    return
+  }
+  console.log("")
+  const result = await bookHotel(client, prepared, state, mode, step)
+  if (result.total) {
+    const { actual, expected } = result.total
+    if (actual === expected) step(`Kjøpet i Fiken: ${formatNok(actual)}`)
+    else
+      warn(
+        `Kjøpet i Fiken er ${formatNok(actual)}, forventet ${formatNok(expected)}. Sjekk det i Fiken.`,
+      )
+  }
+  console.log("\nFerdig. Betalingen kobles til kjøpet når den kommer på banken.")
+}
+
 async function main() {
   if (opts.help || !command || command === "help") {
     console.log(HELP)
@@ -539,6 +729,9 @@ async function main() {
       return report()
     case "check":
       return check()
+    case "hotell":
+    case "hotel":
+      return hotelInvoice()
     case "login":
       return login()
     case "logout":
@@ -557,6 +750,12 @@ async function main() {
           `${a.accountCode.padEnd(12)} ${a.name} (${a.type})${a.inactive ? " [inaktiv]" : ""}`,
         )
       }
+      return
+    }
+    case "chart": {
+      const config = await loadConfig(opts.config)
+      for (const a of await (await fiken(config)).accounts(args[0] ?? "4000-8999"))
+        console.log(`${a.code.padEnd(12)} ${a.name ?? ""}`)
       return
     }
     case "contacts": {

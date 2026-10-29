@@ -53,6 +53,9 @@ export interface PurchaseRequest {
   paymentDate?: string
   /** Contact with supplier = true, required for kind "supplier" (supplier ledger 2400:XXXXX). */
   supplierId?: number
+  /** Due date of an unpaid supplier invoice. */
+  dueDate?: string
+  kid?: string
 }
 
 export interface DraftLine {
@@ -79,6 +82,8 @@ export interface DraftRequest {
   payments?: Payment[]
   /** Customer (sale draft) or supplier (purchase draft). */
   contactId?: number
+  dueDate?: string
+  kid?: string
 }
 
 export interface AccrualRequest {
@@ -152,6 +157,29 @@ const InboxDocument = z.object({
 })
 export type InboxDocument = z.infer<typeof InboxDocument>
 
+/** A received EHF invoice (electronic invoice), as Fiken reads it. */
+const EhfDocument = z.object({
+  ehfDocumentId: z.number(),
+  status: z.string().nullish(),
+  documentType: z.string().nullish(),
+  invoiceNumber: z.string().nullish(),
+  issueDate: z.string().nullish(),
+  dueDate: z.string().nullish(),
+  supplierName: z.string().nullish(),
+  supplierOrganizationNumber: z.string().nullish(),
+  gross: z.number().nullish(),
+  kid: z.string().nullish(),
+  documentUrl: z.string().nullish(),
+  createdAt: z.string().nullish(),
+  /** Set when the EHF itself has been booked as a purchase in Fiken. */
+  purchaseId: z.number().nullish(),
+})
+export type EhfDocument = z.infer<typeof EhfDocument>
+
+/** A bookkeeping account in the chart of accounts, e.g. { code: "6300", name: "Leie lokale" }. */
+const Account = z.object({ code: z.string(), name: z.string().nullish() })
+export type Account = z.infer<typeof Account>
+
 const BankAccount = z.object({
   bankAccountId: z.number(),
   name: z.string(),
@@ -191,6 +219,12 @@ const JournalEntry = z.object({
   lines: z.array(z.object({ account: z.string().nullish(), amount: z.number() })).default([]),
 })
 export type JournalEntry = z.infer<typeof JournalEntry>
+
+type AttachTarget =
+  /** `unpaid`: the attachment documents the purchase only, there is no payment yet. */
+  | { kind: "sale" | "purchase"; id: number; unpaid?: boolean }
+  | { kind: "saleDraft" | "purchaseDraft"; id: number }
+  | { kind: "journalEntry"; id: number }
 
 export class FikenError extends Error {
   constructor(
@@ -340,6 +374,19 @@ export class Fiken {
     return this.get(Company, this.company(""))
   }
 
+  /** The chart of accounts for the current year, e.g. range "4000-8999". */
+  accounts(range?: string) {
+    return this.getAll(Account, this.company("/accounts"), range ? { range } : {})
+  }
+
+  /** Received EHF invoices; "unprocessed" are still in the inbox. */
+  ehfDocuments(query: { status?: "unprocessed" | "used" | "processed" } = {}) {
+    return this.getAll(EhfDocument, this.company("/ehf"), {
+      sortBy: "createdDate desc",
+      ...query,
+    })
+  }
+
   bankAccounts() {
     return this.get(z.array(BankAccount), this.company("/bankAccounts"), { pageSize: 100 })
   }
@@ -434,24 +481,40 @@ export class Fiken {
   }
 
   /** Downloads an inbox document (e.g. the Checkin PDF). */
-  async downloadInboxDocument(doc: InboxDocument): Promise<Uint8Array> {
+  downloadInboxDocument(doc: InboxDocument): Promise<Uint8Array> {
+    return this.download(doc.documentUrl)
+  }
+
+  /** Downloads the PDF of a received EHF invoice. */
+  downloadEhfDocument(doc: EhfDocument): Promise<Uint8Array> {
+    if (!doc.documentUrl) throw new Error(`EHF ${doc.ehfDocumentId} has no PDF in Fiken`)
+    return this.download(doc.documentUrl)
+  }
+
+  private async download(documentUrl: string): Promise<Uint8Array> {
     // Never send the API token anywhere but Fiken: only follow links into the API, via our base URL.
-    if (!doc.documentUrl.startsWith(`${FIKEN_API_URL}/`)) {
-      throw new Error(`Refusing to download inbox document from unexpected URL: ${doc.documentUrl}`)
+    if (!documentUrl.startsWith(`${FIKEN_API_URL}/`)) {
+      throw new Error(`Refusing to download document from unexpected URL: ${documentUrl}`)
     }
-    const res = await this.request("GET", doc.documentUrl.slice(FIKEN_API_URL.length), {
+    const res = await this.request("GET", documentUrl.slice(FIKEN_API_URL.length), {
       accept: "*/*",
     })
     return new Uint8Array(await res.arrayBuffer())
   }
 
   /** Attaches an existing inbox document; Fiken marks it as used. */
-  async attachInboxDocument(
-    target:
-      | { kind: "sale" | "purchase"; id: number }
-      | { kind: "saleDraft" | "purchaseDraft"; id: number }
-      | { kind: "journalEntry"; id: number },
-    inboxDocumentId: number,
+  attachInboxDocument(target: AttachTarget, inboxDocumentId: number): Promise<void> {
+    return this.attach(target, { inboxDocumentId })
+  }
+
+  /** Attaches a received EHF invoice; Fiken marks it as used (not as booked). */
+  attachEhfDocument(target: AttachTarget, ehfDocumentId: number): Promise<void> {
+    return this.attach(target, { ehfDocumentId })
+  }
+
+  private async attach(
+    target: AttachTarget,
+    source: { inboxDocumentId: number } | { ehfDocumentId: number },
   ): Promise<void> {
     const paths = {
       sale: `/sales/${target.id}/attachments`,
@@ -460,10 +523,10 @@ export class Fiken {
       purchaseDraft: `/purchases/drafts/${target.id}/attachments`,
       journalEntry: `/journalEntries/${target.id}/attachments`,
     }
-    const query: Record<string, string | number | boolean> = { inboxDocumentId }
+    const query: Record<string, string | number | boolean> = { ...source }
     if (target.kind === "sale" || target.kind === "purchase") {
       query.attachToSale = true
-      query.attachToPayment = true
+      query.attachToPayment = !target.unpaid
     }
     await this.request("POST", this.company(paths[target.kind]), { query, form: new FormData() })
   }

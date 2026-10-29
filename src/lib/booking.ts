@@ -117,7 +117,7 @@ export interface ContactInfo {
 }
 
 /** Looks up a configured contact and checks it has the right role. Returns a blocker message on failure. */
-async function resolveContact(
+export async function resolveContact(
   client: Fiken,
   ref: ContactRef,
   role: "customer" | "supplier",

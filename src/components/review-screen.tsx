@@ -145,7 +145,7 @@ function chosenParts(open: Parts, picked: Partial<Parts>): Parts {
 type Analysis = Awaited<ReturnType<typeof analyze>> & { fiken: FikenState }
 type AuditAnalysis = Awaited<ReturnType<typeof analyze>> & { audit: Audit }
 
-function SectionLabel({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
+export function SectionLabel({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-3">
       <p className="text-sm tracking-wide text-[var(--color-fg-brand)]">{children}</p>
@@ -158,7 +158,7 @@ function SectionLabel({ children, aside }: { children: ReactNode; aside?: ReactN
  * A card on the review screen. With `marks` (a sale, purchase or payout), hovering the card
  * emphasises all its numbers on the PDF; a line inside narrows it to its own.
  */
-function Card({
+export function Card({
   icon,
   title,
   subtitle,
@@ -994,7 +994,7 @@ function Totals({
   )
 }
 
-function StatusBadge({ blocked, failed }: { blocked: boolean; failed: number }) {
+export function StatusBadge({ blocked, failed }: { blocked: boolean; failed: number }) {
   return (
     <Badge variant={failed === 0 && !blocked ? "default" : "destructive"}>
       {blocked ? "Kan ikke føres" : failed === 0 ? "Alt stemmer" : `${failed} avvik`}
@@ -1274,7 +1274,7 @@ function ChecksCard({
   )
 }
 
-function CheckRow({ check }: { check: Check }) {
+export function CheckRow({ check }: { check: Check }) {
   return (
     <li className="flex gap-3">
       {check.ok && check.note ? (
@@ -1298,8 +1298,8 @@ function CheckRow({ check }: { check: Check }) {
         <span className="mt-0.5 block text-[var(--color-fg-base)]/60 tabular-nums">
           {check.detail ?? (
             <>
-              {check.source ?? "beregnet"} {formatNok(check.expected)} · Checkin{" "}
-              {formatNok(check.actual)}
+              {check.source ?? "beregnet"} {formatNok(check.expected)} ·{" "}
+              {check.reference ?? "Checkin"} {formatNok(check.actual)}
               {!check.ok ? ` · avvik ${formatNok(check.expected - check.actual)}` : ""}
             </>
           )}

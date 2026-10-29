@@ -7,6 +7,7 @@ import {
   ChevronRight,
   FileQuestion,
   FileText,
+  Hotel,
   Inbox,
   LogIn,
   LogOut,
@@ -17,6 +18,7 @@ import { usePathname } from "next/navigation"
 import { type ReactNode, useEffect, useMemo, useState } from "react"
 import { AppLoading } from "@/components/app-loading"
 import { ErrorScreen } from "@/components/error-screen"
+import { HotelReviewScreen, type HotelSelection } from "@/components/hotel-review-screen"
 import { NotFoundScreen } from "@/components/not-found-screen"
 import { ReviewScreen, type Selection } from "@/components/review-screen"
 import { TdcLogo } from "@/components/tdc-logo"
@@ -26,21 +28,32 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { API_BASE, config } from "@/lib/app-config"
 import { listReportDocuments, pickCompany, type ReportDocument } from "@/lib/booking"
-import { type Company, Fiken } from "@/lib/fiken"
+import { pdfPages } from "@/lib/checkin"
+import { type Company, type EhfDocument, Fiken } from "@/lib/fiken"
 import { browserAuth, isLoggedIn, logout, startLogin } from "@/lib/fiken-browser-auth"
 import { formatDay, formatMonth } from "@/lib/format"
+import { looksLikeHotelInvoice } from "@/lib/hotel"
+import { listHotelInvoices } from "@/lib/hotel-booking"
+import { formatNok } from "@/lib/plan"
 import { cn } from "@/lib/utils"
 
 /**
- * The app's screens: the inbox, a bilag from it, or a local file. They all live in this one
- * page; nginx (and the dev rewrite in next.config.ts) serves it for every path without a file.
+ * The app's screens: the inbox, a bilag from it, the hotel's invoice, or a local file. They all
+ * live in this one page; nginx (and the dev rewrite in next.config.ts) serves it for every path
+ * without a file.
  */
-type Route = { page: "inbox" } | { page: "bilag"; documentId: string } | { page: "file" }
+type Route =
+  | { page: "inbox" }
+  | { page: "bilag"; documentId: string }
+  | { page: "hotell"; ehfId: string }
+  | { page: "file" }
 
 function parseRoute(pathname: string): Route | undefined {
   const path = pathname.replace(/\/+$/, "") || "/"
   if (path === "/") return { page: "inbox" }
   if (path === "/fil") return { page: "file" }
+  const ehfId = path.match(/^\/hotell\/(\d+)$/)?.[1]
+  if (ehfId) return { page: "hotell", ehfId }
   const documentId = path.match(/^\/bilag\/(\d+)$/)?.[1]
   return documentId ? { page: "bilag", documentId } : undefined
 }
@@ -137,6 +150,34 @@ const inboxQuery = (client?: Fiken) =>
     enabled: client !== undefined,
   })
 
+const hotelQuery = (client?: Fiken) =>
+  queryOptions({
+    queryKey: ["hotel-invoices", client?.companySlug],
+    queryFn: () =>
+      client && config.hotel
+        ? listHotelInvoices(client, config.hotel)
+        : Promise.reject(new Error("Ikke koblet til Fiken")),
+    enabled: client !== undefined && config.hotel !== undefined,
+  })
+
+/** Whether a picked PDF is the hotel's invoice or a Checkin bilag. */
+const fileKindQuery = (file?: File) =>
+  queryOptions({
+    queryKey: ["file-kind", file?.name, file?.size, file?.lastModified],
+    // Anything that isn't clearly the hotel's invoice opens as a Checkin bilag, which explains
+    // what it couldn't read.
+    queryFn: async () =>
+      file &&
+      (await pdfPages(new Uint8Array(await file.arrayBuffer())).then(
+        looksLikeHotelInvoice,
+        () => false,
+      ))
+        ? ("hotel" as const)
+        : ("checkin" as const),
+    enabled: file !== undefined,
+    staleTime: Number.POSITIVE_INFINITY,
+  })
+
 // The company the user chose, for users with access to several. Not a secret; survives logout.
 const COMPANY_KEY = "regnskap.company"
 
@@ -146,6 +187,7 @@ const FILE_KEY = ["file"]
 function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) {
   const queryClient = useQueryClient()
   const docId = route.page === "bilag" ? route.documentId : undefined
+  const ehfId = route.page === "hotell" ? route.ehfId : undefined
   const fileOpen = route.page === "file"
 
   const session = useQuery({
@@ -167,6 +209,7 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
     [company],
   )
   const inbox = useQuery(inboxQuery(client))
+  const hotelInvoices = useQuery(hotelQuery(client))
 
   const choose = (c: Company) => {
     localStorage.setItem(COMPANY_KEY, c.slug)
@@ -175,12 +218,21 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
   }
 
   const file = fileOpen ? queryClient.getQueryData<File>(FILE_KEY) : undefined
+  const fileKind = useQuery(fileKindQuery(file))
   const doc = docId ? inbox.data?.find((d) => String(d.documentId) === docId) : undefined
-  const selection: Selection | undefined = file
-    ? { kind: "file", file }
-    : doc
-      ? { kind: "inbox", doc }
-      : undefined
+  const ehf = ehfId ? hotelInvoices.data?.find((d) => String(d.ehfDocumentId) === ehfId) : undefined
+  const hotelSelection: HotelSelection | undefined =
+    file && fileKind.data === "hotel"
+      ? { kind: "file", file }
+      : ehf
+        ? { kind: "ehf", doc: ehf }
+        : undefined
+  const selection: Selection | undefined =
+    file && fileKind.data === "checkin"
+      ? { kind: "file", file }
+      : doc
+        ? { kind: "inbox", doc }
+        : undefined
 
   // After a reload the file is gone; show the inbox instead of a dead link.
   const lostFile = fileOpen && file === undefined
@@ -188,8 +240,9 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
     if (lostFile) window.history.replaceState(null, "", "/")
   }, [lostFile])
 
-  const open = (s: Selection) => {
+  const open = (s: Selection | HotelSelection) => {
     if (s.kind === "inbox") return navigate(`/bilag/${s.doc.documentId}`)
+    if (s.kind === "ehf") return navigate(`/hotell/${s.doc.ehfDocumentId}`)
     queryClient.setQueryData(FILE_KEY, s.file)
     navigate("/fil")
   }
@@ -239,6 +292,19 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
     )
   }
 
+  if (hotelSelection && session.data && company && client) {
+    return (
+      <HotelReviewScreen
+        client={client}
+        companyName={company.name}
+        selection={hotelSelection}
+        onBack={() => navigate()}
+      />
+    )
+  }
+
+  if (file && !fileKind.data && !fileKind.isError) return <AppLoading label="Åpner bilaget…" />
+
   if (selection && session.data && company && client) {
     return (
       <ReviewScreen
@@ -246,6 +312,25 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
         companyName={company.name}
         selection={selection}
         onBack={() => navigate()}
+      />
+    )
+  }
+
+  // Opened from a link or reload: wait for the list to know which invoice it is.
+  if (ehfId && !hotelInvoices.isError) {
+    if (!hotelInvoices.data) return <AppLoading label="Åpner fakturaen…" />
+    return (
+      <ErrorScreen
+        illustration={
+          <FileQuestion className="mx-auto size-20 text-[var(--color-fg-brand)]" aria-hidden />
+        }
+        title="Fant ikke fakturaen"
+        body="Den ligger ikke som EHF fra hotellet i Fiken."
+        actions={
+          <Button onClick={() => navigate()} className="w-full sm:w-auto">
+            Til innboksen
+          </Button>
+        }
       />
     )
   }
@@ -368,19 +453,25 @@ function CompanyPicker({
 }
 
 /** Same footprint as the cards, so the grid doesn't jump when the inbox arrives. */
-function PickerLoading() {
+function PickerLoading({ label = "Henter bilag fra innboksen…" }: { label?: string }) {
   return (
     <div
       aria-busy="true"
       className="flex min-h-[9.5rem] items-center justify-center gap-3 rounded-xl bg-[var(--color-bg-surface)]/50 text-sm text-[var(--color-fg-base)]/60 sm:col-span-2 lg:col-span-3"
     >
       <Spinner />
-      Henter bilag fra innboksen…
+      {label}
     </div>
   )
 }
 
-function Picker({ client, onPick }: { client?: Fiken; onPick: (s: Selection) => void }) {
+function Picker({
+  client,
+  onPick,
+}: {
+  client?: Fiken
+  onPick: (s: Selection | HotelSelection) => void
+}) {
   const inbox = useQuery(inboxQuery(client))
   const docs = inbox.data ?? []
   const unused = docs.filter((d) => !d.used).length
@@ -462,6 +553,8 @@ function Picker({ client, onPick }: { client?: Fiken; onPick: (s: Selection) => 
         )}
       </div>
 
+      {config.hotel ? <HotelPicker client={client} onPick={onPick} /> : null}
+
       <div className="flex flex-col gap-3">
         <SectionLabel>Fra fil</SectionLabel>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -477,7 +570,8 @@ function Picker({ client, onPick }: { client?: Fiken; onPick: (s: Selection) => 
               <span className="min-w-0 flex-1 font-normal">
                 <span className="block font-semibold">Velg PDF</span>
                 <span className="mt-1 block text-sm opacity-70">
-                  Se tallene og kontrollene for et bilag. For å føre det må det ligge i innboksen.
+                  Se tallene og kontrollene for et bilag eller hotellfakturaen. For å føre den må
+                  den ligge i Fiken.
                 </span>
               </span>
               <input
@@ -495,6 +589,89 @@ function Picker({ client, onPick }: { client?: Fiken; onPick: (s: Selection) => 
         </div>
       </div>
     </>
+  )
+}
+
+/** The hotel's conference invoices, received as EHF in Fiken. */
+function HotelPicker({ client, onPick }: { client?: Fiken; onPick: (s: HotelSelection) => void }) {
+  const invoices = useQuery(hotelQuery(client))
+  const docs = invoices.data ?? []
+  return (
+    <div className="flex flex-col gap-3">
+      <SectionLabel>Hotellfaktura</SectionLabel>
+      {invoices.isError ? (
+        <Alert variant="destructive">
+          <AlertTitle>Klarte ikke å hente EHF-fakturaer</AlertTitle>
+          <AlertDescription>{invoices.error.message}</AlertDescription>
+        </Alert>
+      ) : null}
+      {invoices.data && docs.length === 0 ? (
+        <p className="text-sm text-[var(--color-fg-base)]/60">
+          Ingen faktura fra hotellet i Fiken. Den kommer som EHF etter konferansen.
+        </p>
+      ) : null}
+      {invoices.isError || (invoices.data && docs.length === 0) ? null : (
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {invoices.data ? (
+            docs.map((doc) => (
+              <li key={doc.ehfDocumentId} className="flex min-w-0">
+                <HotelCard doc={doc} onPick={() => onPick({ kind: "ehf", doc })} />
+              </li>
+            ))
+          ) : (
+            <li className="contents">
+              <PickerLoading label="Henter fakturaer fra Fiken…" />
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function HotelCard({ doc, onPick }: { doc: EhfDocument; onPick: () => void }) {
+  const open = doc.status === "unprocessed"
+  return (
+    <Button
+      variant="surface"
+      onClick={onPick}
+      className="flex h-auto w-full flex-col items-stretch justify-start gap-3 p-4 text-left text-base whitespace-normal"
+    >
+      <span className="flex items-start gap-3">
+        <span
+          className={cn(
+            "flex size-10 shrink-0 items-center justify-center rounded-full",
+            open
+              ? "bg-[var(--color-fg-brand)]/15 text-[var(--color-fg-brand)]"
+              : "bg-white/5 text-[var(--color-fg-base)]/60",
+          )}
+        >
+          <Hotel className="size-5" aria-hidden />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col font-normal">
+          <span className="font-display text-2xl leading-tight">
+            {doc.gross != null ? formatNok(doc.gross) : `Faktura ${doc.invoiceNumber ?? ""}`}
+          </span>
+          <span className="mt-0.5 truncate text-sm opacity-60">
+            {doc.supplierName ?? "Hotellet"} · faktura {doc.invoiceNumber ?? "?"}
+          </span>
+        </span>
+        {open ? (
+          <Badge>Ikke ført</Badge>
+        ) : (
+          <Badge variant="outline" className="text-[var(--color-fg-base)]/70">
+            <Check aria-hidden />
+            Brukt
+          </Badge>
+        )}
+      </span>
+      <span className="flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-sm font-normal">
+        <span className="opacity-60">
+          {doc.issueDate ? `Fakturadato ${formatDay(doc.issueDate)}` : "EHF"}
+        </span>
+        <ChevronRight className="size-5 shrink-0 opacity-60" aria-hidden />
+      </span>
+    </Button>
   )
 }
 

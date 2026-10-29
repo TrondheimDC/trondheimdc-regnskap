@@ -1,8 +1,10 @@
-// Cross-checks the computed Fiken lines against other numbers in the same Checkin report,
-// so a misread PDF or a wrong account mapping shows up before anything is booked.
+// Cross-checks the computed Fiken lines against other numbers in the same Checkin report (or hotel
+// invoice), so a misread PDF or a wrong account mapping shows up before anything is booked.
 
 import { CHECKIN_ACCOUNTS, type Movements, type Payout } from "./checkin.ts"
+import type { VatRate } from "./config.ts"
 import type { VatType } from "./fiken.ts"
+import type { HotelInvoice, HotelPlan, Split } from "./hotel.ts"
 import { formatNok, netFromGross, type Plan } from "./plan.ts"
 
 /** Checkin rounds VAT per ticket, we round per line, so allow a little drift. */
@@ -17,6 +19,8 @@ export interface Check {
   ok: boolean
   /** Name for `expected` when printed, e.g. "beregnet" or "Fiken". */
   source?: string
+  /** Name for `actual` when printed. Default "Checkin". */
+  reference?: string
   /** Hint shown when the check fails. */
   hint?: string
   /** A passing check with something worth a look, e.g. an unusual mva type. Shown, but never blocks. */
@@ -588,4 +592,239 @@ export function roundingCorrection(
     description: `Øreavrunding Checkin ${plan.month}: ført med mva regnet av Fiken, Checkin regner mva per billett. Sum inkl. mva i bilaget ${formatNok(drift.checkin)}, i Fiken ${formatNok(drift.booked + drift.rounded)}`,
     rounded: drift.rounded,
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The hotel's conference invoice
+
+/** Room lines are split per line; each line can round a few øre off the hotel's own split. */
+const SPLIT_TOLERANCE_PER_LINE = 10
+
+const rateText = (rate: number) => `${rate} %`
+const lineList = (lines: { n: number }[]) =>
+  lines
+    .slice(0, 8)
+    .map((l) => `#${l.n}`)
+    .join(", ") + (lines.length > 8 ? ` og ${lines.length - 8} til` : "")
+
+/**
+ * The invoice against itself: every line, the lines per section and rate against page 1, page 1
+ * against the VAT specification, and both against the invoice total.
+ */
+export function verifyHotelInvoice(invoice: HotelInvoice, split: Split): Check[] {
+  const checks: Check[] = []
+  const sumOf = (xs: number[]) => xs.reduce((s, x) => s + x, 0)
+
+  const wrong = invoice.lines.filter((l) => l.net + l.vat !== l.gross)
+  checks.push({
+    label: "Netto + mva = total på hver linje",
+    expected: sumOf(invoice.lines.map((l) => l.net + l.vat)),
+    actual: sumOf(invoice.lines.map((l) => l.gross)),
+    ok: wrong.length === 0,
+    detail:
+      wrong.length === 0 ? `${invoice.lines.length} linjer` : `Stemmer ikke på ${lineList(wrong)}`,
+    hint: "Linjen er trolig lest feil fra PDF-en. Sammenlign med fakturaen.",
+  })
+
+  // Lines per section and rate (rooms split between their two rates) against page 1.
+  const keys = new Map<string, { section: string; rate: VatRate }>()
+  for (const s of invoice.sections) keys.set(`${s.section}:${s.rate}`, s)
+  for (const l of invoice.lines)
+    for (const p of split.parts.get(l.n) ?? [])
+      keys.set(`${l.section}:${p.rate}`, { section: l.section, rate: p.rate })
+  for (const { section, rate } of keys.values()) {
+    const lines = sumOf(
+      invoice.lines
+        .filter((l) => l.section === section)
+        .flatMap((l) => split.parts.get(l.n) ?? [])
+        .filter((p) => p.rate === rate)
+        .map((p) => p.gross),
+    )
+    const printed = invoice.sections.find((s) => s.section === section && s.rate === rate)
+    checks.push({
+      label: `${section || "Uten seksjon"} ${rateText(rate)}: linjene mot side 1`,
+      expected: lines,
+      actual: printed?.gross ?? 0,
+      ok: lines === (printed?.gross ?? 0),
+      source: "linjene",
+      reference: "side 1",
+      hint: printed
+        ? "Summen av linjene stemmer ikke med side 1. Sjekk at alle linjer er lest."
+        : "Side 1 har ingen sum for denne seksjonen og satsen.",
+    })
+  }
+
+  for (const s of split.sections) {
+    const mixed = invoice.lines.filter((l) => l.section === s.section && l.rate === "mixed")
+    const high = Math.max(...(Object.keys(s.printed).map(Number) as VatRate[]))
+    const computed = s.computed[high as VatRate] ?? 0
+    const printed = s.printed[high as VatRate] ?? 0
+    checks.push({
+      label: `${s.section}: linjene delt på ${Object.keys(s.printed)
+        .map((r) => rateText(Number(r)))
+        .join(" og ")} mot side 1`,
+      expected: computed,
+      actual: printed,
+      ok: Math.abs(computed - printed) <= SPLIT_TOLERANCE_PER_LINE * mixed.length,
+      source: `${rateText(high)} per linje`,
+      reference: "side 1",
+      hint: "Delingen per linje er langt fra side 1. Sjekk at rom- og frokostlinjene er lest riktig.",
+    })
+  }
+  if (split.unsplit.length > 0) {
+    checks.push({
+      label: "Linjer med blandet mva",
+      expected: sumOf(split.unsplit.map((l) => l.gross)),
+      actual: 0,
+      ok: false,
+      detail: `Kan ikke deles på satser: ${lineList(split.unsplit)}`,
+      hint: "Seksjonen har ikke to satser på side 1, så linjene kan ikke deles. Før fakturaen for hånd.",
+    })
+  }
+
+  const rates = new Set<VatRate>([
+    ...invoice.sections.map((s) => s.rate),
+    ...invoice.vatSpec.map((v) => v.rate),
+  ])
+  for (const rate of rates) {
+    const sections = sumOf(invoice.sections.filter((s) => s.rate === rate).map((s) => s.gross))
+    const spec = invoice.vatSpec.find((v) => v.rate === rate)
+    const specGross = spec ? spec.base + spec.vat : 0
+    checks.push({
+      label: `${rateText(rate)}: side 1 mot mva-spesifikasjonen`,
+      expected: sections,
+      actual: specGross,
+      ok: sections === specGross,
+      source: "seksjonene",
+      reference: "grunnlag + mva",
+    })
+  }
+  for (const spec of invoice.vatSpec) {
+    const vat = Math.round((spec.base * spec.rate) / 100)
+    checks.push({
+      label: `Mva-spesifikasjonen ${rateText(spec.rate)}: grunnlag × sats`,
+      expected: vat,
+      actual: spec.vat,
+      ok: Math.abs(vat - spec.vat) <= TOLERANCE_ORE,
+      reference: "fakturaen",
+    })
+  }
+
+  checks.push({
+    label: "Mva-spesifikasjonen mot fakturatotal",
+    expected: sumOf(invoice.vatSpec.map((v) => v.base + v.vat)),
+    actual: invoice.total,
+    ok: sumOf(invoice.vatSpec.map((v) => v.base + v.vat)) === invoice.total,
+    source: "grunnlag + mva",
+    reference: "fakturatotal",
+  })
+  checks.push({
+    label: "Alle linjene mot fakturatotal",
+    expected: sumOf(invoice.lines.map((l) => l.gross)),
+    actual: invoice.total,
+    ok: sumOf(invoice.lines.map((l) => l.gross)) === invoice.total,
+    source: "linjene",
+    reference: "fakturatotal",
+    hint: "Noen linjer mangler eller er lest dobbelt.",
+  })
+  return checks
+}
+
+/**
+ * The purchase against the invoice: every line has a category, the purchase adds up to the invoice
+ * total, the VAT per rate matches the VAT specification, and the supplier is the hotel.
+ */
+export function verifyHotelPlan(
+  plan: HotelPlan,
+  invoice: HotelInvoice,
+  supplierOrgNr: string,
+): Check[] {
+  const checks: Check[] = []
+  const unplaced = plan.unplaced.reduce((s, l) => s + l.gross, 0)
+  checks.push({
+    label: "Alle linjene har kategori",
+    expected: unplaced,
+    actual: 0,
+    ok: plan.unplaced.length === 0 && plan.unknown.length === 0,
+    detail:
+      plan.unknown.length > 0
+        ? `Ukjent kategori: ${plan.unknown.join(", ")}`
+        : plan.unplaced.length === 0
+          ? `${plan.placements.length} linjer`
+          : `${plan.unplaced.length} linjer uten kategori (${lineList(plan.unplaced)}), ${formatNok(unplaced)}`,
+    hint: "Flytt linjene til en kategori, eller legg til en regel i oppskriften.",
+  })
+  checks.push({
+    label: "Kjøpet mot fakturatotal",
+    expected: plan.gross,
+    actual: invoice.total,
+    ok: plan.gross === invoice.total,
+    source: "kjøpet",
+    reference: "fakturaen",
+  })
+  for (const spec of invoice.vatSpec) {
+    const lines = plan.lines.filter((l) => l.rate === spec.rate)
+    const vat = lines.reduce((s, l) => s + l.invoiceVat, 0)
+    const deducted = lines.reduce((s, l) => s + (l.vat ?? 0), 0)
+    checks.push({
+      label: `Mva ${rateText(spec.rate)}: kjøpet mot mva-spesifikasjonen`,
+      expected: vat,
+      actual: spec.vat,
+      // Fiken derives VAT per line from the gross, so allow rounding, but never deduct more.
+      ok: Math.abs(vat - spec.vat) <= TOLERANCE_ORE && deducted <= spec.vat,
+      source: "kjøpet",
+      reference: "fakturaen",
+      hint:
+        deducted > spec.vat
+          ? "Vi trekker fra mer inngående mva enn fakturaen viser."
+          : "Avviket er større enn øreavrunding. Sjekk at linjene er lest riktig.",
+    })
+  }
+  checks.push({
+    label: "Leverandøren på fakturaen",
+    expected: 0,
+    actual: 0,
+    ok: invoice.supplierOrgNr === supplierOrgNr,
+    detail: `${invoice.supplierName ?? "Ukjent"}, org.nr. ${invoice.supplierOrgNr ?? "ikke funnet"}${
+      invoice.supplierOrgNr === supplierOrgNr ? "" : ` (oppskriften: ${supplierOrgNr})`
+    }`,
+    hint: "Fakturaen er ikke fra hotellet i oppskriften.",
+  })
+  return checks
+}
+
+/** What Fiken read from the EHF against what we read from its PDF. */
+export function verifyEhf(
+  invoice: HotelInvoice,
+  ehf: { invoiceNumber?: string | null; gross?: number | null; kid?: string | null },
+): Check[] {
+  const checks: Check[] = [
+    {
+      label: "Fakturanummer i EHF-en",
+      expected: 0,
+      actual: 0,
+      ok: ehf.invoiceNumber === invoice.number,
+      detail: `PDF ${invoice.number}, EHF ${ehf.invoiceNumber ?? "mangler"}`,
+      hint: "EHF-en og PDF-en er ikke samme faktura.",
+    },
+  ]
+  if (ehf.gross != null)
+    checks.push({
+      label: "Fakturatotal i EHF-en",
+      expected: invoice.total,
+      actual: ehf.gross,
+      ok: invoice.total === ehf.gross,
+      source: "PDF",
+      reference: "EHF",
+    })
+  if (ehf.kid && invoice.kid && ehf.kid !== invoice.kid)
+    checks.push({
+      label: "KID i EHF-en",
+      expected: 0,
+      actual: 0,
+      ok: false,
+      detail: `PDF ${invoice.kid}, EHF ${ehf.kid}`,
+      hint: "KID-en på kjøpet hentes fra PDF-en. Sjekk hvilken som er riktig.",
+    })
+  return checks
 }

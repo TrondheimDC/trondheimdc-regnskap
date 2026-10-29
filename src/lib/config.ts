@@ -46,6 +46,85 @@ const ContactRef = z
   })
 export type ContactRef = z.infer<typeof ContactRef>
 
+/** VAT rate in percent on the hotel invoice. */
+export const VatRate = z.union([z.literal(25), z.literal(15), z.literal(12), z.literal(0)])
+export type VatRate = z.infer<typeof VatRate>
+
+/** A case-insensitive regular expression, checked when the recipe is read. */
+const Pattern = z.string().refine(
+  (s) => {
+    try {
+      new RegExp(s, "i")
+      return true
+    } catch {
+      return false
+    }
+  },
+  { message: "Not a valid regular expression" },
+)
+
+const CategoryId = z.string().regex(/^[a-z][a-z0-9-]*$/, "Expected a short id like crew")
+
+/** A category on the hotel invoice; becomes one purchase line per VAT rate. */
+const HotelCategory = z.object({
+  id: CategoryId,
+  /** Line text in Fiken, e.g. "Lokaler og stand". */
+  label: z.string().min(1).max(150),
+  /** Our expense account. Can be changed per invoice in the review. */
+  account: AccountCode,
+  /**
+   * Deduct the input VAT: true for every rate, false for none, or the rates to deduct, e.g. [12]
+   * for rooms (12 %) with breakfast (25 %) without deduction. Lines without deduction are booked
+   * as the gross without VAT.
+   */
+  deduct: z.union([z.boolean(), z.array(VatRate)]),
+  /** Line text per rate, replacing the generated one, e.g. { "25": "Frokost, uten fradrag" }. */
+  lineText: z.partialRecord(z.enum(["25", "15", "12", "0"]), z.string().min(1).max(200)).optional(),
+})
+
+/**
+ * Proposes a category for a line. Every condition given must hold; the first rule that matches
+ * wins. The user can move a bill or a line in the review before booking.
+ */
+const HotelRule = z.object({
+  category: CategoryId,
+  /** Section on the invoice, e.g. "POS - Banquet" (case-insensitive). */
+  section: z.string().min(1).optional(),
+  /** VAT rate of the line. Room lines with breakfast have no single rate. */
+  rate: VatRate.optional(),
+  /** Pattern for the item text, e.g. "pizza|coffee". */
+  text: Pattern.optional(),
+  /** Pattern that any line in the same bill must match, e.g. beer or wine for the party bills. */
+  billText: Pattern.optional(),
+  /** Quantity from "889 x …" in the text. */
+  minCount: z.int().min(1).optional(),
+  maxCount: z.int().min(1).optional(),
+})
+
+/** The hotel's conference invoice: one supplier purchase with a line per category and rate. */
+const HotelConfig = z
+  .object({
+    /** The hotel as supplier (leverandørreskontro 2400:XXXXX). */
+    supplier: z.object({
+      organizationNumber: z.string().regex(/^\d{9}$/, "Expected a 9-digit org. number"),
+    }),
+    categories: z.array(HotelCategory).min(1),
+    rules: z.array(HotelRule),
+  })
+  .superRefine((hotel, ctx) => {
+    const ids = new Set<string>()
+    for (const c of hotel.categories) {
+      if (ids.has(c.id))
+        ctx.addIssue({ code: "custom", message: `Category ${c.id} is defined twice` })
+      ids.add(c.id)
+    }
+    for (const r of hotel.rules) {
+      if (!ids.has(r.category))
+        ctx.addIssue({ code: "custom", message: `Rule names unknown category ${r.category}` })
+    }
+  })
+export type HotelConfig = z.infer<typeof HotelConfig>
+
 const Side = z.object({
   /** Our Fiken account for all lines, e.g. 3000 for the sale and 4300 for the purchase. */
   account: AccountCode,
@@ -103,6 +182,8 @@ export const Config = z
       /** Substring identifying the monthly accounting report, e.g. "Regnskapsbilag". */
       reportName: z.string().min(1),
     }),
+    /** The hotel's conference invoice. Optional. */
+    hotel: HotelConfig.optional(),
   })
   .superRefine((config, ctx) => {
     const seen = new Set<string>(config.ignore)

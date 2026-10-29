@@ -45,5 +45,101 @@
   },
   "inbox": {
     "reportName": "Regnskapsbilag"
+  },
+  "hotel": {
+    "$comment": "Konferansefakturaen fra Hotel Brattøra AS (Clarion Hotel Trondheim). Første regel som passer bestemmer kategorien; regninger og linjer kan flyttes i gjennomgangen.",
+    "supplier": {
+      "organizationNumber": "995857480"
+    },
+    "categories": [
+      {
+        "id": "lokaler",
+        "label": "Lokaler og stand",
+        "account": "6300",
+        "deduct": true
+      },
+      {
+        "id": "servering",
+        "label": "Servering til deltakerne",
+        "account": "4500",
+        "deduct": true
+      },
+      {
+        "id": "fest",
+        "label": "Bar og fest",
+        "account": "4500",
+        "deduct": true
+      },
+      {
+        "id": "crew",
+        "label": "Crew og frivillige",
+        "account": "5990",
+        "deduct": false
+      },
+      {
+        "id": "middag",
+        "label": "Speakers' dinner",
+        "account": "7350",
+        "deduct": false
+      },
+      {
+        "id": "rom",
+        "label": "Hotellrom",
+        "account": "7140",
+        "deduct": [12],
+        "lineText": {
+          "12": "Hotellrom",
+          "25": "Frokost på hotellrommene, uten fradrag"
+        }
+      },
+      {
+        "id": "gebyr",
+        "label": "Fakturagebyr",
+        "account": "7770",
+        "deduct": true
+      }
+    ],
+    "rules": [
+      {
+        "section": "Stay",
+        "category": "rom"
+      },
+      {
+        "section": "Fees",
+        "category": "gebyr"
+      },
+      {
+        "section": "POS - Restaurant",
+        "category": "middag"
+      },
+      {
+        "section": "Conference",
+        "rate": 12,
+        "category": "lokaler"
+      },
+      {
+        "text": "lunch|break|breakfast|^\\d+ x food$",
+        "category": "servering"
+      },
+      {
+        "text": "pizza|coffee|crew food|^mat \\d+$",
+        "category": "crew"
+      },
+      {
+        "section": "POS - Banquet",
+        "billText": "lager|pils|bottle|beer|ipa|wine|prosecco|pinot|tempranillo|riesling| gl$|glass$",
+        "category": "fest"
+      },
+      {
+        "section": "POS - Banquet",
+        "minCount": 100,
+        "category": "servering"
+      },
+      {
+        "section": "POS - Banquet",
+        "maxCount": 99,
+        "category": "crew"
+      }
+    ]
   }
 }

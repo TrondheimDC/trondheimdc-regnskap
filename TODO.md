@@ -45,6 +45,19 @@ Open questions to verify on a Fiken test company (`testCompany: true`, with the 
   - Try it in the test company first. Check that journal entry lines come back with the account codes we post (`1960:10001`, `7740`); a rounded month is only detected that way.
   - Run `check` on each old month, then check that "Saldo" is exact for the latest one. Before the corrections it is a few øre off; it allows up to 1 kr.
 
+- [ ] **Hotel invoice: lines without deduction.** We book them as the gross with `vatType: "NONE"` on 5990, 7350 and 7140 (frokost). The API has no domestic "uten fradrag" VAT type for purchases (only `*_FOREIGN_SERVICE_NONDEDUCTIBLE` and gold/emission quotas).
+  - Book the 2026 invoice as a draft in the test company and check that Fiken accepts NONE on those accounts, and that the lines don't show in the mva-melding.
+  - Confirm with the accountant that this is how they want non-deductible VAT (gross on the cost account), and the categories: bar/fest 25 % with deduction, crew and speakers' dinner without, rooms 12 % with and breakfast without.
+- [ ] **Hotel invoice: accounts.** 6300, 4500, 5990, 7350, 7140 and 7770 are suggestions, not read from the company's chart. Run `pnpm foring chart` and adjust `hotel.categories[].account` (the review blocks if an account is missing).
+- [ ] **Hotel invoice: EHF.** The tool reads the hotel's EHF via `GET /ehf` and attaches it with `ehfDocumentId`.
+  - Check that `documentUrl` gives the hotel's own PDF (with text layer and the same layout), not a page Fiken renders from the XML. If not, read it from the inbox with `--inbox-doc` or a local file.
+  - Check that attaching the EHF to a purchase (and to a purchase draft) works, and that the EHF leaves the inbox.
+  - Check that an EHF Fiken has booked itself gets `status: "processed"` and `purchaseId`; the tool then refuses to book it again.
+- [ ] **Hotel invoice: unpaid supplier purchase.** `kind: "supplier"`, `paid: false`, `dueDate`, `kid` in one `POST /purchases`.
+  - Check that it stays open on the hotel's 2400:xxxxx with the due date and KID, and that the bank payment can be matched to it in Superføring.
+  - Check that `attachToPayment: false` is accepted for an unpaid purchase.
+- [ ] **Hotel invoice: 25 % lines with deduction rounding.** Fiken derives net and VAT from the gross per line. On the 2026 invoice our VAT per rate matches the VAT specification to the øre; the check allows 1 kr.
+
 ## Findings (public docs, October 2026)
 
 hjelp.fiken.no renders with JavaScript. The articles can be read at `https://hjelp.fiken.no/<slug>`.

@@ -330,3 +330,77 @@ Periodisering er valgfritt og står av i eksempelkonfigurasjonen. For å slå de
 ```json
 "sale": { "account": "3000", "accrual": { "account": "2965", "startDate": "2026-10-01", "periods": 1 } }
 ```
+
+## Hotellfakturaen
+
+Konferansefakturaen fra hotellet (Hotel Brattøra AS, org.nr. 995 857 480, Clarion Hotel Trondheim) føres som **ett leverandørkjøp** med én linje per kategori og mva-sats. Oppskriften står under `hotel` i `regnskap.config.json`.
+
+- **Web-app:** forsiden viser hotellets EHF-fakturaer under «Hotellfaktura». En lokal PDF som er hotellfakturaen åpnes også her, og EHF-en med samme fakturanummer legges ved.
+- **CLI:** `pnpm foring hotell` henter hotellets ubehandlede EHF fra Fiken. Se under.
+
+### Hva som leses
+
+Fakturaen må ha tekstlag (den skannede proformaen fra 2025 støttes ikke).
+
+- **Side 1:** fakturanummer, -dato, forfall, KID, sum per seksjon og mva-sats (Stay 12 %, Conference 25 %, …), mva-spesifikasjonen og fakturatotal.
+- **Sidene etter:** én linje per vare med netto, mva og total, under seksjon og regning (`NO121S…`). Mva-satsen utledes av netto og mva. Antall leses fra teksten («889 x …»).
+- **Romlinjene** («Stay») har rom (12 %) og frokost (25 %) på samme linje. De deles på de to satsene per linje og justeres så seksjonen stemmer på øret med side 1. Avviket før justering vises i kontrollene.
+- **Navn:** romregningene har gjestens navn og romnummer. Bare regningsnummeret leses; navnene lagres, logges og vises ikke.
+
+### Kategorier
+
+| Kategori | Konto | Mva | Hva |
+|---|---|---|---|
+| Lokaler og stand | 6300 | 12 %, fradrag | Room Rental, saler, STAND, strøm |
+| Servering til deltakerne | 4500 | 25 %, fradrag | Lunsj, pauser, «N x Food», frokostbuffet, brus til lunsj |
+| Bar og fest | 4500 | 25 %, fradrag | POS - Banquet-regninger med øl/vin |
+| Crew og frivillige | 5990 | uten fradrag | Pizza, kaffe, brus på riggedagen, crew food (netto etter kreditt) |
+| Speakers' dinner | 7350 | uten fradrag | POS - Restaurant |
+| Hotellrom | 7140 | rom 12 % med fradrag, frokost 25 % uten | Stay |
+| Fakturagebyr | 7770 | 12 %, fradrag | Fees |
+
+Kontoene kan byttes per faktura: web-appen har en nedtrekksliste med kontoene i Fiken (4000–8999), CLI-en `--account crew=5990`. Endres de for godt, endre `account` i oppskriften.
+
+**Linjer uten fradrag** føres med bruttobeløpet og mva-type `NONE` (ingen mva-behandling). Fiken-API-et har ingen innenlandsk «uten fradrag»-type for kjøp. Se [TODO.md](../TODO.md).
+
+**Reglene** i `hotel.rules` foreslår kategori per linje; første regel som passer gjelder. En regel kan kreve seksjon, mva-sats, tekst (regex), at en linje i samme regning passer `billText` (f.eks. øl eller vin gjør hele regningen til festen), og `minCount`/`maxCount` for antall. Samme vare kan høre hjemme flere steder (brus til deltakerne eller til crew), så forslaget må ses over:
+
+- **Flytt** en hel regning eller én linje til en annen kategori. Web: nedtrekkslisten ved regningen eller linjen. CLI: `--move NO121S0000033=servering,#57=crew` (`#57` er linjenummeret CLI-en skriver ut).
+- **Uplasserte linjer stopper føringen.** De havner aldri et sted i stillhet.
+
+### Kontrollene
+
+- Netto + mva = total på hver linje.
+- Linjene per seksjon og sats mot side 1.
+- Delingen av romlinjene mot side 1 (inntil 10 øre per linje).
+- Side 1 per sats mot mva-spesifikasjonen, og grunnlag × sats mot mva-en.
+- Mva-spesifikasjonen og alle linjene mot fakturatotal.
+- Alle linjene har kategori; kjøpet er nøyaktig fakturatotal.
+- Mva per sats i kjøpet mot mva-spesifikasjonen (inntil 1 kr), og aldri mer inngående mva enn fakturaen.
+- Leverandøren på fakturaen er hotellet i oppskriften.
+- EHF-en i Fiken har samme fakturanummer og total som PDF-en.
+
+Mot Fiken: at hotellet finnes som leverandør, at kontoene finnes, at EHF-en finnes (for vedlegg), og at fakturaen ikke allerede er ført: et kjøp med fakturanummeret i referansen, et kjøpsutkast med det som fakturanummer, eller EHF-en bokført som kjøp i Fiken.
+
+### Føringen
+
+Etter bekreftelse («Lag utkast» / «Bokfør», i CLI-en `j`/`ja`):
+
+| | |
+|---|---|
+| Type | Leverandørkjøp på hotellet (leverandørreskontro 2400:xxxxx), **ikke betalt** |
+| Dato / forfall | Fakturadato / forfallsdato fra fakturaen, med KID |
+| Referanse | Fakturanummeret, f.eks. `90000000001` |
+| Vedlegg | EHF-en (`ehfDocumentId`), ellers innboksdokumentet |
+
+Betalingen føres ikke av verktøyet. Den kobles til kjøpet i Fiken når den kommer på banken.
+
+```sh
+pnpm foring hotell                                  # dry-run: hotellets ubehandlede EHF fra Fiken
+pnpm foring hotell --ehf 123                        # velg EHF hvis det er flere
+pnpm foring hotell faktura.pdf                      # lokal PDF; EHF-en med samme nummer legges ved
+pnpm foring hotell --move NO121S0000033=servering   # flytt en regning
+pnpm foring hotell --account lokaler=4590           # annen konto for en kategori
+pnpm foring hotell --mode create                    # fører, etter bekreftelse
+pnpm foring chart                                   # kontoplanen i Fiken (4000–8999)
+```

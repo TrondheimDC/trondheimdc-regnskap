@@ -4,6 +4,7 @@ import type { Prepared } from "./booking.ts"
 import type { Box } from "./checkin.ts"
 import type { Config } from "./config.ts"
 import type { VatType } from "./fiken.ts"
+import type { HotelInvoice } from "./hotel.ts"
 import { type BookedLine, effectiveVatType } from "./verify.ts"
 
 export type MarkKind = "sale" | "purchase" | "vat" | "payout" | "check" | "ignored"
@@ -109,5 +110,19 @@ export function buildMarks({ plan, source, transfers }: Prepared, config: Config
     add(`result:${account}`, "ignored", `${account} ignoreres`)
     add(`balance:${account}`, "ignored", `${account} ignoreres`)
   }
+  return marks
+}
+
+/** Marks on page 1 of the hotel invoice: the sums per section and rate, the VAT and the total. */
+export function buildHotelMarks(invoice: HotelInvoice): Mark[] {
+  const marks: Mark[] = []
+  const add = (key: string, kind: MarkKind, label: string, amount: number) => {
+    const box = invoice.boxes[key]
+    if (box) marks.push({ n: marks.length + 1, key, kind, box, label, amount })
+  }
+  for (const s of invoice.sections)
+    add(`section:${s.section}:${s.rate}`, "purchase", `${s.section} ${s.rate} %`, s.gross)
+  for (const v of invoice.vatSpec) add(`vat:${v.rate}`, "vat", `Mva ${v.rate} %`, v.vat)
+  add("total", "check", "Fakturatotal", invoice.total)
   return marks
 }
