@@ -113,12 +113,16 @@
         "category": "middag"
       },
       {
+        "text": "middag|dinner",
+        "category": "middag"
+      },
+      {
         "section": "Conference",
         "rate": 12,
         "category": "lokaler"
       },
       {
-        "text": "lunch|break|breakfast|^\\d+ x food$",
+        "text": "lunch|break|breakfast|^\\d+ [x×] food$",
         "category": "servering"
       },
       {
@@ -132,11 +136,13 @@
       },
       {
         "section": "POS - Banquet",
+        "text": "coca cola|cola|pepsi|fanta|sprite|solo|farris|eira|bonaqua|water|vann|juice|brus",
         "minCount": 100,
         "category": "servering"
       },
       {
         "section": "POS - Banquet",
+        "text": "coca cola|cola|pepsi|fanta|sprite|solo|farris|eira|bonaqua|water|vann|juice|brus",
         "maxCount": 99,
         "category": "crew"
       }

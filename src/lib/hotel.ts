@@ -51,7 +51,7 @@ export interface HotelLine {
   text: string
   /** First date on the line, YYYY-MM-DD. */
   date?: string
-  /** Quantity from "889 x …" in the text, negative on a credit line. Otherwise ±1. */
+  /** Quantity from "889 x …" or "889 × …" in the text, negative on a credit line. Otherwise ±1. */
   count: number
   net: number
   vat: number
@@ -213,7 +213,7 @@ export function parseHotelInvoice(pages: Cell[][][]): HotelInvoice {
       if (amounts.length !== 4 || amounts.some((a) => a === undefined)) continue
       const [net, vat, quantity, gross] = amounts as [number, number, number, number]
       const text = texts.slice(0, dateIndex).join(" ")
-      const counted = /^(\d+)\s*x\s/i.exec(text)
+      const counted = /^(\d+)\s*[x×]\s/i.exec(text)
       const sign = quantity < 0 ? -1 : 1
       lines.push({
         n: lines.length + 1,

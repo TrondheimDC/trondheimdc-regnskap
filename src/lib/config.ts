@@ -96,7 +96,7 @@ const HotelRule = z.object({
   text: Pattern.optional(),
   /** Pattern that any line in the same bill must match, e.g. beer or wine for the party bills. */
   billText: Pattern.optional(),
-  /** Quantity from "889 x …" in the text. */
+  /** Quantity from "889 x …" or "889 × …" in the text. */
   minCount: z.int().min(1).optional(),
   maxCount: z.int().min(1).optional(),
 })

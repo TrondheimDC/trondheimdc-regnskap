@@ -142,17 +142,17 @@ describe("categories", () => {
     expect(of(19)).toMatchObject({ category: "servering", by: "bill" })
     expect(of(5)).toMatchObject({ category: "servering", by: "line" })
     expect(of(7)).toMatchObject({ category: "lokaler", by: "bill" })
-    expect(of(15)).toMatchObject({ category: "crew", by: { rule: 8 } })
+    expect(of(15)).toMatchObject({ category: "crew", by: { rule: 9 } })
   })
 
   test("lines no rule places stop the booking", () => {
-    const plan = buildHotelPlan(invoice, { ...hotel, rules: hotel.rules.slice(0, 4) })
+    const plan = buildHotelPlan(invoice, { ...hotel, rules: hotel.rules.slice(0, 5) })
     expect(plan.unplaced.map((l) => l.n)).toContain(5)
     const prepared = prepareHotel(
       { invoice, description: "test" },
       {
         ...hotel,
-        rules: hotel.rules.slice(0, 4),
+        rules: hotel.rules.slice(0, 5),
       },
     )
     const check = prepared.checks.find((c) => c.label === "Alle linjene har kategori")
@@ -176,6 +176,53 @@ describe("categories", () => {
     expect(parseAccountsArg("crew=5990,lokaler=4590")).toEqual({ crew: "5990", lokaler: "4590" })
     expect(() => parseMovesArg("Pizza=crew")).toThrow(/Ugyldig flytting/)
     expect(() => parseAccountsArg("crew=59")).toThrow(/Ugyldig konto/)
+  })
+})
+
+describe("another year's invoice", () => {
+  const BILL = "NO121S0000050, NO121 BK-00002 TDC 2031"
+  const item = (section: string, bill: string, text: string, parts: [12 | 25, number][]) => ({
+    section,
+    bill,
+    text,
+    date: "19.10.2031",
+    parts,
+  })
+  const other = parseHotelInvoicePdf(
+    hotelInvoicePdf({
+      number: "90000000003",
+      date: "29.10.2031",
+      dueDate: "08.11.2031",
+      kid: "1",
+      pages: [
+        [
+          item("Conference", BILL, "40 × Food", [[25, 1180000]]),
+          item("Conference", BILL, "30 × Middag NOR", [[25, 2985000]]),
+          item("Conference", BILL, "Hall B", [[12, 1500000]]),
+          item("POS - Bar", "NO121S0000051, x", "5 × Fanta 0,33", [[25, 30000]]),
+          item("POS - Banquet", "NO121S0000052, x", "200 × Coca Cola 0,33", [[25, 1200000]]),
+          item("POS - Banquet", "NO121S0000053, x", "12 × Sandwich", [[25, 180000]]),
+        ],
+      ],
+    }),
+  )
+
+  test("reads quantities written with ×", async () => {
+    expect((await other).lines.map((l) => l.count)).toEqual([40, 30, 1, 5, 200, 12])
+  })
+
+  test("food and soft drinks by quantity, dinner by name, the unknown stops", async () => {
+    const plan = buildHotelPlan(await other, hotel)
+    expect(plan.placements.map((p) => [p.line.text, p.category])).toEqual([
+      ["40 × Food", "servering"],
+      ["30 × Middag NOR", "middag"],
+      ["Hall B", "lokaler"],
+      // A section the rules don't know, and an item that isn't a soft drink: no category.
+      ["5 × Fanta 0,33", undefined],
+      ["200 × Coca Cola 0,33", "servering"],
+      ["12 × Sandwich", undefined],
+    ])
+    expect(plan.unplaced.map((l) => l.n)).toEqual([4, 6])
   })
 })
 

@@ -343,7 +343,7 @@ Konferansefakturaen fra hotellet (Hotel Brattøra AS, org.nr. 995 857 480, Clari
 Fakturaen må ha tekstlag (den skannede proformaen fra 2025 støttes ikke).
 
 - **Side 1:** fakturanummer, -dato, forfall, KID, sum per seksjon og mva-sats (Stay 12 %, Conference 25 %, …), mva-spesifikasjonen og fakturatotal.
-- **Sidene etter:** én linje per vare med netto, mva og total, under seksjon og regning (`NO121S…`). Mva-satsen utledes av netto og mva. Antall leses fra teksten («889 x …»).
+- **Sidene etter:** én linje per vare med netto, mva og total, under seksjon og regning (`NO121S…`). Mva-satsen utledes av netto og mva. Antall leses fra teksten («889 x …» eller «889 × …»).
 - **Romlinjene** («Stay») har rom (12 %) og frokost (25 %) på samme linje. De deles på de to satsene per linje og justeres så seksjonen stemmer på øret med side 1. Avviket før justering vises i kontrollene.
 - **Navn:** romregningene har gjestens navn og romnummer. Bare regningsnummeret leses; navnene lagres, logges og vises ikke.
 
@@ -354,8 +354,8 @@ Fakturaen må ha tekstlag (den skannede proformaen fra 2025 støttes ikke).
 | Lokaler og stand | 6300 | 12 %, fradrag | Room Rental, saler, STAND, strøm |
 | Servering til deltakerne | 4500 | 25 %, fradrag | Lunsj, pauser, «N x Food», frokostbuffet, brus til lunsj |
 | Bar og fest | 4500 | 25 %, fradrag | POS - Banquet-regninger med øl/vin |
-| Crew og frivillige | 5990 | uten fradrag | Pizza, kaffe, brus på riggedagen, crew food (netto etter kreditt) |
-| Speakers' dinner | 7350 | uten fradrag | POS - Restaurant |
+| Crew og frivillige | 5990 | uten fradrag | Pizza, kaffe, crew food (netto etter kreditt), brus og vann i små antall |
+| Speakers' dinner | 7350 | uten fradrag | POS - Restaurant, og linjer med «middag» eller «dinner» |
 | Hotellrom | 7140 | rom 12 % med fradrag, frokost 25 % uten | Stay |
 | Fakturagebyr | 7770 | 12 %, fradrag | Fees |
 
@@ -363,7 +363,7 @@ Kontoene kan byttes per faktura: web-appen har en nedtrekksliste med kontoene i 
 
 **Linjer uten fradrag** føres med bruttobeløpet og mva-type `NONE` (ingen mva-behandling). Fiken-API-et har ingen innenlandsk «uten fradrag»-type for kjøp. Se [TODO.md](../TODO.md).
 
-**Reglene** i `hotel.rules` foreslår kategori per linje; første regel som passer gjelder. En regel kan kreve seksjon, mva-sats, tekst (regex), at en linje i samme regning passer `billText` (f.eks. øl eller vin gjør hele regningen til festen), og `minCount`/`maxCount` for antall. Samme vare kan høre hjemme flere steder (brus til deltakerne eller til crew), så forslaget må ses over:
+**Reglene** i `hotel.rules` foreslår kategori per linje; første regel som passer gjelder. En regel kan kreve seksjon, mva-sats, tekst (regex), at en linje i samme regning passer `billText` (f.eks. øl eller vin gjør hele regningen til festen), og `minCount`/`maxCount` for antall. Samme vare kan høre hjemme flere steder (brus til deltakerne eller til crew), så forslaget må ses over. Brus og vann i POS - Banquet foreslås etter antall: 100 stk. eller mer blir servering, færre blir crew. Andre varer der, og seksjoner reglene ikke kjenner (f.eks. «POS - Bar»), får ingen kategori.
 
 - **Flytt** en hel regning eller én linje til en annen kategori. Web: nedtrekkslisten ved regningen eller linjen. CLI: `--move NO121S0000033=servering,#57=crew` (`#57` er linjenummeret CLI-en skriver ut).
 - **Uplasserte linjer stopper føringen.** De havner aldri et sted i stillhet.
