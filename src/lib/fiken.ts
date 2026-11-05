@@ -186,7 +186,10 @@ const BankAccount = z.object({
   accountCode: z.string(),
   type: z.string(),
   inactive: z.boolean(),
+  /** Last day the account is reconciled (bankavstemt) through in Fiken. */
+  reconciledDate: z.string().nullish(),
 })
+export type BankAccount = z.infer<typeof BankAccount>
 
 export const Contact = z.object({
   contactId: z.number(),

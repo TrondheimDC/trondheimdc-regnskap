@@ -505,6 +505,14 @@ async function check() {
     if (t.existing) step(`${line}  ført (id ${t.existing.journalEntryId})`)
     else warn(`${line}  mangler i Fiken`)
   }
+  if (audit.bank) {
+    const b = audit.bank
+    console.log(
+      `\nBankavstemming (${b.accountCode} avstemt til ${b.reconciledDate ?? "aldri"}): koble i Fiken`,
+    )
+    for (const p of b.pending) warn(`${p.date}  ${formatNok(p.amount).padStart(16)}`)
+    console.log(`  ${b.url}`)
+  }
 
   console.log(
     `\nKontroller (${config.checkinAccount}: ${formatNok(audit.checkin.start)} → ${formatNok(audit.checkin.end)} i Fiken)`,

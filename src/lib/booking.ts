@@ -8,10 +8,12 @@
 //   bookRounding() for such a month booked with Fiken's VAT: a fri postering for the øreavrunding
 // Nothing here prints or prompts; callers present the results and ask for confirmation.
 
+import { type BankReconciliation, bankReconciliationUrl, unreconciled } from "./bank.ts"
 import type { Movements, ParsedReport } from "./checkin.ts"
 import { monthFromText, toReport } from "./checkin.ts"
 import type { Config, ContactRef } from "./config.ts"
 import type {
+  BankAccount,
   Company,
   Contact,
   DraftRequest,
@@ -523,6 +525,8 @@ export async function findBooked(
 
 export interface Audit {
   booked: Booked
+  /** Payouts in Fiken whose bank lines are likely not linked yet in bankavstemmingen. */
+  bank?: BankReconciliation
   /** The payouts, with the ones found in Fiken marked `existing`. */
   transfers: Transfer[]
   checkin: FikenCheckinAccount
@@ -554,8 +558,14 @@ export async function auditBooked(
   const complete =
     found.sales.length > 0 && (plan.purchase.lines.length === 0 || found.purchases.length > 0)
   const drift = complete ? roundingDrift(plan, sums, rounded) : undefined
+  const bank = await findBankReconciliation(
+    client,
+    config,
+    transfers.filter((t) => t.existing),
+  )
   return {
     booked: found,
+    bank,
     transfers,
     checkin,
     rounding: drift && roundingCorrection(plan, drift, { ...config, ...config.reconcile }),
@@ -669,6 +679,44 @@ export interface BookResult {
   steps: string[]
   /** Balance on the Checkin account after a real booking, and what it should be. */
   balance?: { actual: number; expected: number }
+  /** After booking payouts: the ones still to link in Fiken's bankavstemming. */
+  bank?: BankReconciliation
+}
+
+/**
+ * How far the bank account is reconciled, against the payouts booked to it. Undefined when there
+ * is nothing to link, or Fiken can't tell: it is only a pointer, never a reason to stop.
+ */
+export async function findBankReconciliation(
+  client: Fiken,
+  config: Config,
+  payouts: { date: string; amount: number }[],
+): Promise<BankReconciliation | undefined> {
+  if (payouts.length === 0) return undefined
+  let account: BankAccount | undefined
+  try {
+    account = (await client.bankAccounts()).find((a) => a.accountCode === config.bankAccount)
+  } catch {
+    return undefined
+  }
+  if (!account) return undefined
+  const reconciledDate = account.reconciledDate ?? undefined
+  const pending = unreconciled(payouts, reconciledDate).map(({ date, amount }) => ({
+    date,
+    amount,
+  }))
+  if (pending.length === 0) return undefined
+  return {
+    accountCode: account.accountCode,
+    bankAccountId: account.bankAccountId,
+    reconciledDate,
+    pending,
+    url: bankReconciliationUrl(
+      client.companySlug,
+      account.bankAccountId,
+      pending.map((p) => p.date),
+    ),
+  }
 }
 
 const PART_NAMES: Record<Part, string> = {
@@ -809,6 +857,9 @@ export async function book(
 
   return {
     steps,
+    bank: parts.transfers
+      ? await findBankReconciliation(client, config, fiken.transfers)
+      : undefined,
     balance: {
       actual: await client.accountBalance(config.checkinAccount, plan.date),
       expected:

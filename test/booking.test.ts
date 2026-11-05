@@ -63,6 +63,7 @@ const HELD_AFTER = 6066957
 
 type Client = Pick<
   Fiken,
+  | "companySlug"
   | "getCompany"
   | "bankAccounts"
   | "inbox"
@@ -89,6 +90,9 @@ type Client = Pick<
 >
 
 class FakeFiken implements Client {
+  companySlug = "test-as"
+  /** How far the bank account is reconciled (bankavstemt) in Fiken. */
+  reconciledDate?: string
   nextId = 100
   /** Movements on the Checkin account (positive = into the account). */
   ledger: { date: string; amount: number }[] = [{ date: "2026-02-01", amount: FEB_BALANCE }]
@@ -122,7 +126,14 @@ class FakeFiken implements Client {
   }
   async bankAccounts() {
     return [
-      { bankAccountId: 1, name: "Bank", accountCode: BANK, type: "normal", inactive: false },
+      {
+        bankAccountId: 1,
+        name: "Bank",
+        accountCode: BANK,
+        type: "normal",
+        inactive: false,
+        reconciledDate: this.reconciledDate,
+      },
       { bankAccountId: 2, name: "Checkin", accountCode: CHECKIN, type: "foreign", inactive: false },
     ]
   }
@@ -660,6 +671,34 @@ describe("auditBooked", () => {
     expect(audit.transfers.every((t) => t.existing)).toBe(true)
     expect(audit.checks.filter((c) => !c.ok)).toEqual([])
     expect(fake.writes).toHaveLength(writes)
+  })
+
+  test("points at bankavstemmingen for payouts after the reconciled date", async () => {
+    const fake = new FakeFiken()
+    const p = await booked(fake)
+    const never = await auditBooked(fake.client, config, p)
+    expect(never.bank?.pending).toEqual([
+      { date: "2026-03-08", amount: 2000000 },
+      { date: "2026-03-22", amount: 3000000 },
+    ])
+    expect(never.bank?.url).toBe(
+      "https://fiken.no/foretak/test-as/bank/bkbf/1?fra=2026-03-05&til=2026-03-25",
+    )
+    fake.reconciledDate = "2026-03-10"
+    const partly = await auditBooked(fake.client, config, p)
+    expect(partly.bank?.reconciledDate).toBe("2026-03-10")
+    expect(partly.bank?.pending.map((t) => t.date)).toEqual(["2026-03-22"])
+    fake.reconciledDate = "2026-03-31"
+    expect((await auditBooked(fake.client, config, p)).bank).toBeUndefined()
+  })
+
+  test("booking payouts says which to link in bankavstemmingen", async () => {
+    const fake = new FakeFiken()
+    fake.reconciledDate = "2026-03-10"
+    const p = await prepared()
+    const state = await inspectFiken(fake.client, config, p, { attach: true })
+    const result = await book(fake.client, config, p, state, "create", ALL)
+    expect(result.bank?.pending.map((t) => t.date)).toEqual(["2026-03-22"])
   })
 
   test("a month booked by hand is found by the payment to the Checkin account", async () => {

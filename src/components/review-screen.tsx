@@ -9,9 +9,11 @@ import {
   CircleCheck,
   CircleX,
   Coins,
+  ExternalLink,
   FilePen,
   FileText,
   Landmark,
+  Link2,
   ListChecks,
   OctagonX,
   ReceiptText,
@@ -48,6 +50,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import { config } from "@/lib/app-config"
+import type { BankReconciliation } from "@/lib/bank"
 import {
   type Audit,
   auditBooked,
@@ -773,6 +776,7 @@ function AuditReview({
           {audit.transfers.map((t) => (
             <TransferCard key={t.voucher} transfer={t} audit />
           ))}
+          {audit.bank ? <BankCard bank={audit.bank} /> : null}
         </div>
       ) : null}
 
@@ -1178,6 +1182,40 @@ function TransferCard({ transfer: t, audit = false }: { transfer: Transfer; audi
   )
 }
 
+/** Fiken's API can't link bank lines, so the user does it in Fiken; this says which and where. */
+function BankCard({ bank }: { bank: BankReconciliation }) {
+  return (
+    <Card
+      icon={<Link2 />}
+      title="Bankavstemming"
+      subtitle={
+        bank.reconciledDate
+          ? `${bank.accountCode} er avstemt til ${formatDay(bank.reconciledDate)}`
+          : `${bank.accountCode} er ikke avstemt ennå`
+      }
+    >
+      <p className="mt-3 text-sm text-[var(--color-fg-base)]/70">
+        Koble {bank.pending.length === 1 ? "utbetalingen" : "utbetalingene"} mot banklinjene i
+        Fiken:
+      </p>
+      <ul className="mt-2 divide-y divide-white/10 text-sm">
+        {bank.pending.map((p) => (
+          <li key={p.date} className="flex items-baseline justify-between gap-3 py-1.5">
+            <span>{formatDay(p.date)}</span>
+            <span className="tabular">{formatNok(p.amount)}</span>
+          </li>
+        ))}
+      </ul>
+      <Button asChild variant="outline" className="mt-3 w-full">
+        <a href={bank.url} target="_blank" rel="noopener noreferrer">
+          Åpne bankavstemmingen i Fiken
+          <ExternalLink className="size-4" aria-hidden />
+        </a>
+      </Button>
+    </Card>
+  )
+}
+
 function AccountChip({ code, name }: { code: string; name: string }) {
   return (
     <span className="inline-flex items-baseline gap-1.5 rounded-lg bg-white/5 px-2.5 py-1">
@@ -1445,6 +1483,8 @@ function BookingStatus({
           </AlertDescription>
         </Alert>
       ) : null}
+
+      {result?.bank ? <BankCard bank={result.bank} /> : null}
 
       {mode === "draft" && result && (config.sale.accrual || config.purchase.accrual) ? (
         <Alert>
