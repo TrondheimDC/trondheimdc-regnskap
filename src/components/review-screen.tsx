@@ -20,6 +20,7 @@ import {
 } from "lucide-react"
 import { type ComponentProps, type ReactNode, useMemo, useState } from "react"
 import { toast } from "sonner"
+import { invalidateFikenReads } from "@/components/fiken-cache"
 import {
   MarkedAmount,
   MarkProvider,
@@ -245,11 +246,8 @@ export function ReviewScreen({
     onSuccess: (_, mode) =>
       toast.success(mode === "draft" ? "Utkastene ligger i Fiken" : "Bokført i Fiken"),
     onError: () => toast.error("Føringen stoppet"),
-    onSettled: async () => {
-      // Opening the bilag again should show what was booked, not the plan from before.
-      await queryClient.invalidateQueries({ queryKey: ["analysis"], refetchType: "none" })
-      await queryClient.invalidateQueries({ queryKey: ["inbox"] })
-    },
+    // Opening the bilag again should show what was booked, not the plan from before.
+    onSettled: () => invalidateFikenReads(queryClient),
   })
 
   // A booked month that is a few øre off: the one thing that can be booked from the audit.
@@ -259,11 +257,12 @@ export function ReviewScreen({
       if (!prepared || !audit) throw new Error("Bilaget er ikke lest ennå")
       return bookRounding(client, config, prepared, audit, "create")
     },
-    onSuccess: async () => {
-      toast.success("Øreavrunding bokført i Fiken")
+    onSuccess: () => toast.success("Øreavrunding bokført i Fiken"),
+    onError: () => toast.error("Øreavrundingen ble ikke ført"),
+    onSettled: async () => {
+      await invalidateFikenReads(queryClient)
       await analysis.refetch()
     },
-    onError: () => toast.error("Øreavrundingen ble ikke ført"),
   })
 
   const month =

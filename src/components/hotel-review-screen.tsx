@@ -19,6 +19,7 @@ import {
 import { type ReactNode, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { AccountPicker } from "@/components/account-picker"
+import { invalidateFikenReads } from "@/components/fiken-cache"
 import { MarkedAmount, MarkProvider, MarkRow, useMarksFor } from "@/components/marks"
 import { PagedPdfPreview } from "@/components/pdf-preview"
 import { Card, CheckRow, SectionLabel, StatusBadge } from "@/components/review-screen"
@@ -142,10 +143,7 @@ export function HotelReviewScreen({
     onSuccess: (_, mode) =>
       toast.success(mode === "draft" ? "Kjøpsutkastet ligger i Fiken" : "Bokført i Fiken"),
     onError: () => toast.error("Føringen stoppet"),
-    onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["hotel-analysis"], refetchType: "none" })
-      await queryClient.invalidateQueries({ queryKey: ["hotel-invoices"] })
-    },
+    onSettled: () => invalidateFikenReads(queryClient),
   })
 
   const invoice = source?.invoice
