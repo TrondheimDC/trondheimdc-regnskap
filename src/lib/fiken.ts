@@ -466,8 +466,22 @@ export class Fiken {
     return this.create(this.company(`/purchases/${purchaseId}/accruals`), accrual)
   }
 
-  createGeneralJournalEntry(entry: GeneralJournalEntryRequest) {
-    return this.create(this.company("/generalJournalEntries"), entry)
+  /**
+   * Creates a fri postering with one journal entry and returns that entry's id. Fiken's Location
+   * header points at the transaction, whose id is not a journal entry id (attachments 404 on it).
+   */
+  async createGeneralJournalEntry(entry: GeneralJournalEntryRequest): Promise<number> {
+    const transactionId = await this.create(this.company("/generalJournalEntries"), entry)
+    const transaction = await this.get(
+      z.object({ entries: z.array(z.object({ journalEntryId: z.number() })) }),
+      this.company(`/transactions/${transactionId}`),
+    )
+    const [first, ...rest] = transaction.entries
+    if (!first || rest.length > 0)
+      throw new Error(
+        `Fiken transaction ${transactionId} has ${transaction.entries.length} journal entries, expected 1`,
+      )
+    return first.journalEntryId
   }
 
   /** Balance in øre of a bookkeeping account (e.g. "1960:10001") at the end of the given date. */
