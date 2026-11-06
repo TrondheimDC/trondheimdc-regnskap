@@ -7,6 +7,7 @@ import { API_BASE, config } from "@/lib/app-config"
 import type {
   Contact,
   ContactRequest,
+  CurrencyPurchaseRequest,
   DraftRequest,
   GeneralJournalEntryRequest,
   OrderLine,
@@ -14,7 +15,7 @@ import type {
   SaleRequest,
 } from "@/lib/fiken"
 import { FIKEN_API_URL } from "@/lib/fiken"
-import { HOTEL_INVOICE, MARCH_2026, UTLEGG_REPORT } from "../../test/pdf-fixture"
+import { HOTEL_INVOICE, MARCH_2026, UTLEGG_REPORT, UTLEGG_REPORT_V2 } from "../../test/pdf-fixture"
 
 const SLUG = config.companySlug ?? "trondheimdc"
 const CHECKIN = config.checkinAccount
@@ -72,6 +73,15 @@ function createState() {
         createdAt: "2030-11-06T10:00:00Z",
         documentUrl: `${FIKEN_API_URL}/companies/${SLUG}/inbox/7002/file`,
       },
+      {
+        documentId: 7003,
+        name: "UT-20301106-7KQ2-kari-testesen-expense-report.pdf",
+        filename: "UT-20301106-7KQ2-kari-testesen-expense-report.pdf",
+        description: "Mock: generert utleggsrapport, format 2",
+        status: false,
+        createdAt: "2030-11-07T10:00:00Z",
+        documentUrl: `${FIKEN_API_URL}/companies/${SLUG}/inbox/7003/file`,
+      },
     ],
     ehf: [
       {
@@ -93,13 +103,12 @@ function createState() {
     ],
     contacts: [
       {
+        // Registered by hand earlier, without email or account number: the report fills them in.
         contactId: 503,
         name: "Kari Testesen",
-        email: "kari@example.com",
         customer: false,
         supplier: true,
         supplierAccountCode: "2400:20003",
-        bankAccountNumber: "12345678903",
         inactive: false,
       },
       {
@@ -251,6 +260,12 @@ export const handlers = [
     })
     return created("/contacts", contactId)
   }),
+  http.put(`${C}/contacts/:id`, async ({ params, request }) => {
+    const contact = state.contacts.find((c) => c.contactId === Number(params.id))
+    if (!contact) return notFound("contact")
+    Object.assign(contact, (await request.json()) as Partial<Contact>)
+    return new HttpResponse(null, { status: 200 })
+  }),
   http.get(`${C}/contacts/:id`, ({ params }) => {
     const contact = state.contacts.find((c) => c.contactId === Number(params.id))
     return contact ? HttpResponse.json(contact) : notFound("contact")
@@ -269,7 +284,13 @@ export const handlers = [
     )
   }),
   http.get(`${C}/inbox/:id/file`, ({ params }) =>
-    pdf(Number(params.id) === 7002 ? UTLEGG_REPORT : MARCH_2026),
+    pdf(
+      Number(params.id) === 7002
+        ? UTLEGG_REPORT
+        : Number(params.id) === 7003
+          ? UTLEGG_REPORT_V2
+          : MARCH_2026,
+    ),
   ),
   http.get(`${C}/ehf`, () => HttpResponse.json(state.ehf)),
   http.get(`${C}/ehf/:id/file`, () => pdf(HOTEL_INVOICE)),
@@ -323,9 +344,19 @@ export const handlers = [
     return purchase ? HttpResponse.json(purchase) : notFound("purchase")
   }),
   http.post(`${C}/purchases`, async ({ request }) => {
-    const body = (await request.json()) as PurchaseRequest
+    const body = (await request.json()) as PurchaseRequest | CurrencyPurchaseRequest
     const purchaseId = state.id()
-    const lines = withVat(body.lines, purchaseId * 10)
+    // A purchase in another currency keeps its amounts in that currency; the mock doesn't convert.
+    const lines = withVat(
+      body.lines.map((l) =>
+        "netPriceInCurrency" in l
+          ? { ...l, netPrice: l.netPriceInCurrency, vat: l.vatInCurrency }
+          : l,
+      ),
+      purchaseId * 10,
+    ).map((l) =>
+      body.currency === "NOK" ? l : { ...l, netPriceInCurrency: l.netPrice, vatInCurrency: l.vat },
+    )
     const total = gross(lines)
     state.purchases.push({
       purchaseId,

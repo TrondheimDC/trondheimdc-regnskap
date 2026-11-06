@@ -12,6 +12,7 @@
 //
 // Everything after reading the PDF is pure, so it can be printed in dry-run and unit tested.
 
+import { getMeta } from "unpdf"
 import type { Box } from "./checkin.ts"
 import { parseAmount, pdfPages } from "./checkin.ts"
 import type { UtleggConfig, VatRate } from "./config.ts"
@@ -37,9 +38,17 @@ export interface UtleggRow {
   receiptRates: VatRate[]
   /** The receipt has a text layer (a PDF, not a photo). */
   receiptHasText: boolean
+  /** Category id the person chose in the form (format 2), e.g. "reise". */
+  formCategory?: string
 }
 
 export interface Utleggsrapport {
+  /** Version of the utlegg form that made it: 1 (before November 2026) or 2. */
+  format: 1 | 2
+  /** "UT-20261106-7KQ2" (format 2): unique per report, used as the purchase identifier. */
+  reportId?: string
+  /** "Antall kvitteringer" on page 1 (format 2), to check that no row is lost. */
+  count?: number
   name: string
   address?: string
   email?: string
@@ -55,7 +64,7 @@ export interface Utleggsrapport {
   rows: UtleggRow[]
   /** "Total:" on page 1, in the payout currency. */
   total?: number
-  /** Where values on page 1 were read: `row:3`, `total`, `name`, `bankAccount`. */
+  /** Where values were read: `row:3`, `total`, `name`, `bankAccount`. */
   boxes: Record<string, Box>
 }
 
@@ -86,7 +95,8 @@ export function receiptRates(text: string): VatRate[] {
   return VAT_RATES.filter((r) => rates.has(r))
 }
 
-const RECEIPT_HEADER = /^Bilag for utlegg #(\d+):/
+// Not anchored: the header can share a text cell with other text on the page (seen on a bank screenshot).
+const RECEIPT_HEADER = /Bilag for utlegg #(\d+):/
 
 export function parseUtleggsrapport(pages: Cell[][][]): Utleggsrapport {
   const first = pages[0] ?? []
@@ -205,6 +215,7 @@ export function parseUtleggsrapport(pages: Cell[][][]): Utleggsrapport {
 
   const bank = fields.get("Kontonummer")?.replace(/\s/g, "")
   return {
+    format: 1,
     name: fields.get("Navn") ?? "",
     address: fields.get("Adresse"),
     email: fields.get("E-post"),
@@ -219,11 +230,256 @@ export function parseUtleggsrapport(pages: Cell[][][]): Utleggsrapport {
   }
 }
 
+/** The PDF's document info, where the utlegg form names its layout version. */
+export interface PdfInfo {
+  Subject?: string
+  Keywords?: string
+  /** The person's full name in format 2, also when a character can't be shown on the page. */
+  Author?: string
+}
+
+/**
+ * Which version of the utlegg form made the report. From v2 on, the form puts the version in the
+ * PDF's metadata ("format-2" in Keywords, "format 2" in Subject), not on the page. v1 has no
+ * version and is known by its layout. Returns the version number, or undefined if this isn't an
+ * utleggsrapport.
+ */
+export function utleggFormat(pages: Cell[][][], info: PdfInfo = {}): number | undefined {
+  const tagged = /\bformat[- ](\d+)\b/i.exec(`${info.Keywords ?? ""} ${info.Subject ?? ""}`)
+  if (tagged) return Number(tagged[1])
+  // Without metadata (stripped on the way): format 2 is the one with a Rapport-ID on page 1.
+  if ((pages[0] ?? []).flat().some((c) => c.text === "Rapport-ID")) return 2
+  return looksLikeUtleggsrapport(pages) ? 1 : undefined
+}
+
+async function pdfInfo(data: Uint8Array): Promise<PdfInfo> {
+  try {
+    const { info } = await getMeta(data.slice())
+    const str = (v: unknown) => (typeof v === "string" ? v : undefined)
+    return { Subject: str(info?.Subject), Keywords: str(info?.Keywords), Author: str(info?.Author) }
+  } catch {
+    return {}
+  }
+}
+
 export async function parseUtleggPdf(data: Uint8Array): Promise<Utleggsrapport> {
-  const pages = await pdfPages(data)
-  if (!looksLikeUtleggsrapport(pages))
+  const [pages, info] = await Promise.all([pdfPages(data), pdfInfo(data)])
+  const format = utleggFormat(pages, info)
+  if (format === undefined)
     throw new Error("Dette ser ikke ut som en utleggsrapport fra utleggsskjemaet")
+  if (format === 2) return parseUtleggsrapportV2(pages, info)
+  if (format !== 1)
+    throw new Error(
+      `Utleggsrapporten er laget med en nyere versjon av skjemaet (format ${format}), som regnskap ikke leser ennå.`,
+    )
   return parseUtleggsrapport(pages)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Format 2 (from November 2026), as described in trondheimdc-utlegg/docs/pdf-format.md.
+//
+// Page 1: fields as a label with the value on the line(s) below at the same x, in two columns
+// ("Utlegg fra", "Utbetales til"); a summary row "Antall kvitteringer | Periode | Sum"; then
+// the table # | Dato | Beskrivelse | Kategori | Beløp | Utbetales (NOK), which may continue on
+// pages headed "Kvitteringer (forts.)" and ends with a "Sum" row. Every receipt page is headed
+// "Kvittering n av N" with the category on the right.
+
+/** Category text in the PDF -> category id in the recipe. */
+export const FORM_CATEGORIES: Record<string, string> = {
+  Reise: "reise",
+  Overnatting: "overnatting",
+  Servering: "servering",
+  Materiell: "materiell",
+  Utstyr: "utstyr",
+  Programvare: "programvare",
+  "Meetup-støtte": "meetup-stotte",
+  Profilering: "profilering",
+  Annet: "annet",
+}
+
+const V2_LABELS = new Set([
+  "Rapport-ID",
+  "Dato",
+  "Navn",
+  "Adresse",
+  "E-post",
+  "Kontonummer",
+  "Land",
+  "IBAN",
+  "BIC",
+  "Routingnummer",
+  "Kontotype",
+  "Kontonummer (utland)",
+  "Bank",
+  "Bankadresse",
+  "Kontoinnehaver",
+  "Valuta",
+])
+
+const V2_RECEIPT_HEADER = /^Kvittering (\d+) av (\d+)/
+const V2_FOOTER = /^Utleggsrapport UT-|^Side \d+ av \d+$/
+
+/** "2 450,50 NOK" -> { amount, currency } */
+function amountWithCurrency(text: string): { amount: number; currency: string } | undefined {
+  const m = /^(-?[\d\s.,]+)\s+([A-Z]{3})$/.exec(text.trim())
+  const amount = m ? parseAmount(m[1]!) : undefined
+  return m && amount !== undefined ? { amount, currency: m[2]! } : undefined
+}
+
+export function parseUtleggsrapportV2(pages: Cell[][][], info: PdfInfo = {}): Utleggsrapport {
+  const first = pages[0] ?? []
+  const boxes: Record<string, Box> = {}
+  const mark = (key: string, c: Cell, page: number) => {
+    boxes[key] = { page, x0: c.x0, x1: c.x1, y: c.y, h: c.h }
+  }
+  const cells = first.flat()
+  const heading = cells.find((c) => c.text === "Kvitteringer")
+  const summaryRow = first.find((r) => r.some((c) => c.text === "Antall kvitteringer"))
+  const fieldsBottom = summaryRow?.[0]?.y ?? heading?.y ?? 0
+
+  // Fields: walk each column (cells starting at the same x) top-down; a label starts a field and
+  // the cells under it, until the next label, are its value.
+  const fields = new Map<string, string>()
+  const fieldCells = new Map<string, Cell>()
+  const columns: Cell[][] = []
+  for (const c of cells.filter((c) => c.y > fieldsBottom)) {
+    const column = columns.find((col) => Math.abs(col[0]!.x0 - c.x0) < 3)
+    if (column) column.push(c)
+    else columns.push([c])
+  }
+  for (const column of columns) {
+    let label: string | undefined
+    for (const c of column.sort((a, b) => b.y - a.y)) {
+      if (V2_LABELS.has(c.text)) {
+        label = c.text
+        continue
+      }
+      if (!label) continue
+      fields.set(label, fields.has(label) ? `${fields.get(label)} ${c.text}` : c.text)
+      if (!fieldCells.has(label)) fieldCells.set(label, c)
+    }
+  }
+  const nameCell = fieldCells.get("Navn")
+  if (nameCell) mark("name", nameCell, 0)
+  const accountCell = fieldCells.get("Kontonummer") ?? fieldCells.get("IBAN")
+  if (accountCell) mark("bankAccount", accountCell, 0)
+
+  // Summary: the row under the labels; the count is under its label, the sum is the last cell.
+  let count: number | undefined
+  if (summaryRow) {
+    const values = first[first.indexOf(summaryRow) + 1] ?? []
+    const countLabel = summaryRow.find((c) => c.text === "Antall kvitteringer")!
+    const countCell = values.find((c) => Math.abs(c.x0 - countLabel.x0) < 3)
+    count = countCell && /^\d+$/.test(countCell.text) ? Number(countCell.text) : undefined
+  }
+
+  // The table, on page 1 and any "Kvitteringer (forts.)" pages before the receipts.
+  const rows: UtleggRow[] = []
+  let total: number | undefined
+  let payoutCurrency = fields.get("Valuta") ?? "NOK"
+  let done = false
+  for (const [pageIndex, page] of pages.entries()) {
+    if (done) break
+    const headerIndex = page.findIndex((r) => r.some((c) => c.text === "Beskrivelse"))
+    if (headerIndex < 0) continue
+    const head = page[headerIndex]!
+    const col = (name: RegExp) => head.find((c) => name.test(c.text))
+    const dateCol = col(/^Dato$/)
+    const descriptionCol = col(/^Beskrivelse$/)
+    const categoryCol = col(/^Kategori$/)
+    const amountCol = col(/^Beløp$/)
+    const payoutCol = col(/^Utbetales/)
+    if (!dateCol || !descriptionCol || !categoryCol || !amountCol || !payoutCol) continue
+    const currency = /\(([A-Z]{3})\)/.exec(payoutCol.text)?.[1]
+    if (currency) payoutCurrency = currency
+
+    let current: UtleggRow | undefined
+    for (const row of page.slice(headerIndex + 1)) {
+      if (row.some((c) => V2_FOOTER.test(c.text))) continue
+      const firstCell = row[0]
+      if (firstCell && firstCell.x1 < dateCol.x0 && firstCell.text === "Sum") {
+        const sumCell = row.find((c) => c.x1 > payoutCol.x0)
+        total = sumCell ? parseAmount(sumCell.text) : undefined
+        if (sumCell) mark("total", sumCell, pageIndex)
+        done = true
+        break
+      }
+      const number = firstCell && firstCell.x1 < dateCol.x0 ? /^\d+$/.exec(firstCell.text) : null
+      if (number) {
+        current = {
+          n: Number(number[0]),
+          description: "",
+          date: "",
+          pages: [],
+          receiptRates: [],
+          receiptHasText: false,
+        }
+        rows.push(current)
+      }
+      if (!current) continue
+      for (const cell of number ? row.slice(1) : row) {
+        // Right-aligned columns first, by where the cell ends.
+        if (cell.x1 > payoutCol.x0) {
+          current.amount = parseAmount(cell.text)
+          mark(`row:${current.n}`, cell, pageIndex)
+        } else if (cell.x1 > amountCol.x0 - 5) {
+          const original = amountWithCurrency(cell.text)
+          if (original) current.original = original
+          // "kurs 10,9120" / "kurs mangler" under the amount: nothing to keep.
+        } else if (cell.x0 >= categoryCol.x0 - 2) {
+          current.formCategory = FORM_CATEGORIES[cell.text] ?? cell.text
+        } else if (cell.x0 >= descriptionCol.x0 - 2) {
+          current.description = `${current.description} ${cell.text}`.trim()
+        } else if (cell.x0 >= dateCol.x0 - 2 && parseDate(cell.text)) {
+          current.date = parseDate(cell.text)!
+        }
+      }
+    }
+  }
+  // The amount column always has the receipt's currency; keep it only when it isn't the payout's.
+  for (const row of rows)
+    if (row.original && row.original.currency === payoutCurrency) row.original = undefined
+
+  // Receipt pages: "Kvittering n av N", the category, the description, a "dd.mm.åååå · …" line,
+  // then the receipt itself.
+  for (const [i, page] of pages.entries()) {
+    const n = page
+      .flat()
+      .map((c) => V2_RECEIPT_HEADER.exec(c.text)?.[1])
+      .find(Boolean)
+    const row = rows.find((r) => r.n === Number(n))
+    if (!row) continue
+    row.pages.push(i)
+    const dateLine = page.findIndex((r) => /^\d{2}\.\d{2}\.\d{4} · /.test(r[0]?.text ?? ""))
+    const receipt = page
+      .slice(dateLine + 1)
+      .filter((r) => !r.some((c) => V2_FOOTER.test(c.text)))
+      .map((r) => r.map((c) => c.text).join(" "))
+    if (receipt.some((t) => t.trim() !== "")) row.receiptHasText = true
+    row.receiptRates = [
+      ...new Set([...row.receiptRates, ...receiptRates(receipt.join("\n"))]),
+    ].sort((a, b) => b - a)
+  }
+
+  const bank = fields.get("Kontonummer")?.replace(/\s/g, "")
+  const dato = fields.get("Dato")
+  return {
+    format: 2,
+    reportId: fields.get("Rapport-ID"),
+    count,
+    // The page shows "?" for characters the font lacks; the metadata has the whole name.
+    name: info.Author?.trim() || (fields.get("Navn") ?? ""),
+    address: fields.get("Adresse"),
+    email: fields.get("E-post"),
+    bankAccount: bank && /^\d{11}$/.test(bank) ? bank : undefined,
+    iban: fields.get("IBAN")?.replace(/\s/g, ""),
+    payoutCurrency,
+    generated: dato ? parseDate(dato) : undefined,
+    validationSkipped: cells.some((c) => c.text === "Kontonummeret er ikke validert"),
+    rows,
+    total,
+    boxes,
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -242,8 +498,8 @@ export interface UtleggChoices {
 export interface UtleggPlacement {
   row: UtleggRow
   category?: string
-  /** By a rule in the recipe (index), moved by the user, or nothing matched. */
-  by: { rule: number } | "moved" | "none"
+  /** By a rule in the recipe (index), chosen in the form (format 2), moved by the user, or none. */
+  by: { rule: number } | "form" | "moved" | "none"
   rate?: VatRate
   /**
    * Where the rate comes from: the user's choice, the receipt's text, the receipt's currency
@@ -263,9 +519,12 @@ export function classifyUtlegg(
   return report.rows.map((row): UtleggPlacement => {
     const key = `#${row.n}`
     const moved = choices.moves?.[key]
-    const rule = moved ? -1 : utlegg.rules.findIndex((r) => matches(r.text, row.description))
-    const category = moved ?? utlegg.rules[rule]?.category
-    const by = moved ? "moved" : rule >= 0 ? { rule } : "none"
+    // The person's own choice in the form wins over guessing from the description.
+    const form = row.formCategory
+    const rule =
+      moved || form ? -1 : utlegg.rules.findIndex((r) => matches(r.text, row.description))
+    const category = moved ?? form ?? utlegg.rules[rule]?.category
+    const by = moved ? "moved" : form ? "form" : rule >= 0 ? { rule } : "none"
     const defaults = utlegg.categories.find((c) => c.id === category)
 
     const chosen = choices.rates?.[key]
@@ -296,11 +555,16 @@ export interface UtleggPlanLine extends OrderLine {
 }
 
 export interface UtleggPlan {
-  /** Purchase identifier, also used to find it again: "Utlegg 2026-11-06 Kari Nordmann". */
+  /**
+   * Purchase identifier, also used to find it again: "Utlegg UT-20261106-7KQ2 Kari Nordmann", or
+   * "Utlegg 2026-11-06 Kari Nordmann" for format 1.
+   */
   reference: string
   /** The last receipt's date: the claim is complete then, and no cost lands before it happened. */
   date: string
   dueDate: string
+  /** The payout currency; amounts in the plan are in it. NOK, or EUR etc. for accounts abroad. */
+  currency: string
   placements: UtleggPlacement[]
   lines: UtleggPlanLine[]
   gross: number
@@ -378,12 +642,14 @@ export function buildUtleggPlan(
     .sort()
   const date = dates.at(-1) ?? report.generated ?? ""
   return {
-    reference: `Utlegg ${report.generated ?? date} ${report.name}`.slice(0, 100),
+    // Format 2 has a report id, unique per claim; format 1 only the day and the name.
+    reference: `Utlegg ${report.reportId ?? report.generated ?? date} ${report.name}`.slice(0, 100),
     date,
     dueDate: addDays(
       report.generated && report.generated > date ? report.generated : date,
       utlegg.dueDays,
     ),
+    currency: report.payoutCurrency,
     placements,
     lines,
     gross: lines.reduce((s, l) => s + l.gross, 0),

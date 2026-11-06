@@ -149,23 +149,30 @@
     ]
   },
   "utlegg": {
-    "$comment": "Utleggsrapporter fra utleggsskjemaet (én PDF per krav). Ett leverandørkjøp per krav med personen som leverandør, én linje per kvittering. Første regel som passer bestemmer kategorien; kategori og mva-sats kan endres i gjennomgangen.",
+    "$comment": "Utleggsrapporter fra utleggsskjemaet (én PDF per krav). Ett leverandørkjøp per krav med personen som leverandør, én linje per kvittering. Utlegg føres uten mva-fradrag, slik regnskapsfører har gjort (kvitteringen står på personen). Første regel som passer bestemmer kategorien; kategori, konto og mva-sats kan endres i gjennomgangen. «Støtte til meetups» er penger vi gir til en annen part (f.eks. en meetup-gruppes Meetup.com-abonnement), ikke foreningens egne abonnement.",
     "inboxName": "expense-report",
     "dueDays": 14,
     "categories": [
       {
         "id": "reise",
-        "label": "Reise og transport",
+        "label": "Reise og transport (speakere)",
+        "account": "7145",
+        "rate": 12,
+        "deduct": false
+      },
+      {
+        "id": "overnatting",
+        "label": "Overnatting",
         "account": "7140",
         "rate": 12,
-        "deduct": true
+        "deduct": false
       },
       {
         "id": "servering",
-        "label": "Servering til deltakerne",
-        "account": "4500",
+        "label": "Møter og servering",
+        "account": "6860",
         "rate": 15,
-        "deduct": true
+        "deduct": false
       },
       {
         "id": "crew",
@@ -186,22 +193,62 @@
         "label": "Materiell og rekvisita",
         "account": "6560",
         "rate": 25,
-        "deduct": true
+        "deduct": false
+      },
+      {
+        "id": "utstyr",
+        "label": "Utstyr (printere, skjermer o.l.)",
+        "account": "6551",
+        "rate": 25,
+        "deduct": false
+      },
+      {
+        "id": "programvare",
+        "label": "Programvare og abonnement for foreningen",
+        "account": "6553",
+        "rate": 25,
+        "deduct": false
+      },
+      {
+        "id": "meetup-stotte",
+        "label": "Støtte til meetups (f.eks. Meetup.com-abonnement)",
+        "account": "7440",
+        "rate": 0,
+        "deduct": false
+      },
+      {
+        "id": "profilering",
+        "label": "Profilering (t-skjorter, merch)",
+        "account": "7321",
+        "rate": 25,
+        "deduct": false
       },
       {
         "id": "annet",
         "label": "Annet",
-        "account": "7790",
-        "deduct": true
+        "account": "7798",
+        "deduct": false
       }
     ],
     "rules": [
       {
-        "text": "taxi|drosje|fly|flight|tog|train|\\bvy\\b|buss|flybuss|værnes|parkering|bompeng|ferge|hotell|hotel",
+        "text": "meetup",
+        "category": "meetup-stotte"
+      },
+      {
+        "text": "sessionize|figma|github|programvare|software|lisens|license|domene|domain|abonnement|subscription",
+        "category": "programvare"
+      },
+      {
+        "text": "hotell|hotel|overnatting",
+        "category": "overnatting"
+      },
+      {
+        "text": "taxi|drosje|fly|flight|\\bplane\\b|\\btickets?\\b|tog|train|\\bvy\\b|buss|\\bbus\\b|flybuss|værnes|parkering|bompeng|ferge",
         "category": "reise"
       },
       {
-        "text": "middag|dinner|speaker",
+        "text": "middag|dinner",
         "category": "representasjon"
       },
       {
@@ -209,8 +256,20 @@
         "category": "crew"
       },
       {
-        "text": "pizza|mat|snacks|kaffe|coffee|frukt|brus|vann|kake|lunsj|lunch",
+        "text": "årsmøte|styremøte|møte|meeting",
         "category": "servering"
+      },
+      {
+        "text": "pizza|\\bmat\\b|snacks|kaffe|coffee|frukt|\\bbrus\\b|\\bvann\\b|\\bkake|lunsj|lunch|frokost|breakfast",
+        "category": "servering"
+      },
+      {
+        "text": "t-?skjorte|t-?shirt|merch|klistremerke|sticker|banner|roll-?up",
+        "category": "profilering"
+      },
+      {
+        "text": "printer|skriver|skjerm|monitor|laptop|\\bpc\\b|tastatur|keyboard",
+        "category": "utstyr"
       },
       {
         "text": "teip|tape|kabel|strips|batteri|skjøte|papir|penn|tusj|skilt|plakat|print|trykk|verktøy|materiell",

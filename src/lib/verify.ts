@@ -30,6 +30,8 @@ export interface Check {
   pinned?: boolean
   /** Shown instead of the two amounts, for a check that doesn't compare sums. */
   detail?: string
+  /** Currency of `expected` and `actual` when not NOK, e.g. an utlegg paid out in EUR. */
+  currency?: string
 }
 
 const VAT_LABELS: Record<string, string> = {
@@ -932,6 +934,30 @@ export function verifyUtlegg(report: Utleggsrapport, plan: UtleggPlan): Check[] 
         : "Mva-fradraget for de eldste kvitteringene kommer en termin senere.",
   })
 
+  // Format 2 says how many receipts there are, and every receipt has its own pages.
+  if (report.count !== undefined)
+    checks.push({
+      label: "Antall kvitteringer mot rapporten",
+      expected: report.rows.length,
+      actual: report.count,
+      ok: report.rows.length === report.count,
+      detail: `${report.rows.length} rader lest, rapporten sier ${report.count}`,
+      hint: "En rad er lest feil eller mangler. Sjekk tabellen i rapporten.",
+    })
+  if (report.format === 2) {
+    const missing = report.rows.filter((r) => r.pages.length === 0).map((r) => r.n)
+    checks.push({
+      label: "Alle kvitteringene er lagt ved",
+      expected: 0,
+      actual: 0,
+      ok: missing.length === 0,
+      detail:
+        missing.length === 0
+          ? `${report.rows.length} kvitteringer med egen side`
+          : `Fant ikke kvitteringssiden for ${receiptList(missing)}`,
+      hint: "Be om rapporten på nytt med alle kvitteringene.",
+    })
+  }
   if (report.validationSkipped)
     checks.push({
       label: "Kontonummeret er sjekket i skjemaet",
@@ -941,5 +967,6 @@ export function verifyUtlegg(report: Utleggsrapport, plan: UtleggPlan): Check[] 
       detail: "Skjemaet sier at kontrollen av kontonummeret ble hoppet over",
       hint: "Sjekk kontonummeret med personen før utbetaling.",
     })
-  return checks
+  const currency = report.payoutCurrency
+  return currency === "NOK" ? checks : checks.map((c) => ({ ...c, currency }))
 }

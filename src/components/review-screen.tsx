@@ -79,7 +79,7 @@ import {
   vatKey,
 } from "@/lib/marks"
 import { pdfPageCount, renderPdfPage } from "@/lib/pdf-render"
-import { formatNok } from "@/lib/plan"
+import { formatMoney, formatNok } from "@/lib/plan"
 import { cn } from "@/lib/utils"
 import { type Check, explainRounding, isRoundingCheck, type RoundingCorrection } from "@/lib/verify"
 
@@ -1363,9 +1363,11 @@ export function CheckRow({ check }: { check: Check }) {
         <span className="mt-0.5 block text-[var(--color-fg-base)]/60 tabular-nums">
           {check.detail ?? (
             <>
-              {check.source ?? "beregnet"} {formatNok(check.expected)} ·{" "}
-              {check.reference ?? "Checkin"} {formatNok(check.actual)}
-              {!check.ok ? ` · avvik ${formatNok(check.expected - check.actual)}` : ""}
+              {check.source ?? "beregnet"} {formatMoney(check.expected, check.currency)} ·{" "}
+              {check.reference ?? "Checkin"} {formatMoney(check.actual, check.currency)}
+              {!check.ok
+                ? ` · avvik ${formatMoney(check.expected - check.actual, check.currency)}`
+                : ""}
             </>
           )}
         </span>

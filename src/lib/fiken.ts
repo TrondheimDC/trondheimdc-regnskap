@@ -42,6 +42,15 @@ export interface SaleRequest {
   customerId?: number
 }
 
+/** A line in another currency than NOK, in its minor unit; Fiken converts it to NOK. */
+export interface CurrencyOrderLine {
+  description: string
+  netPriceInCurrency: number
+  vatInCurrency?: number
+  account: string
+  vatType: VatType
+}
+
 export interface PurchaseRequest {
   identifier: string
   date: string
@@ -56,6 +65,11 @@ export interface PurchaseRequest {
   /** Due date of an unpaid supplier invoice. */
   dueDate?: string
   kid?: string
+}
+
+/** A purchase in another currency than NOK (e.g. an utlegg paid out in EUR). */
+export interface CurrencyPurchaseRequest extends Omit<PurchaseRequest, "lines"> {
+  lines: CurrencyOrderLine[]
 }
 
 export interface DraftLine {
@@ -112,6 +126,9 @@ const ResultLine = z.object({
   account: z.string().nullish(),
   netPrice: z.number().nullish(),
   vat: z.number().nullish(),
+  /** Set on lines of a purchase in another currency than NOK. */
+  netPriceInCurrency: z.number().nullish(),
+  vatInCurrency: z.number().nullish(),
   /** Fiken has more VAT types than we book with, so any string is accepted when reading. */
   vatType: z.string().nullish(),
 })
@@ -134,6 +151,17 @@ const PurchaseResult = z.object({
   purchaseId: z.number(),
   identifier: z.string().nullish(),
   date: z.string().nullish(),
+  /** "cash_purchase" or "supplier". */
+  kind: z.string().nullish(),
+  currency: z.string().nullish(),
+  paid: z.boolean().nullish(),
+  supplier: z
+    .object({
+      contactId: z.number().optional(),
+      name: z.string().nullish(),
+      organizationNumber: z.string().nullish(),
+    })
+    .nullish(),
   lines: z.array(ResultLine),
   paymentAccount: z.string().nullish(),
   payments: z.array(PaymentResult).nullish(),
@@ -231,7 +259,15 @@ const JournalEntry = z.object({
   offsetTransactionId: z.number().nullish(),
   transactionType: z.string().nullish(),
   /** Read side of the lines: one account per line, signed amount. */
-  lines: z.array(z.object({ account: z.string().nullish(), amount: z.number() })).default([]),
+  lines: z
+    .array(
+      z.object({
+        account: z.string().nullish(),
+        amount: z.number(),
+        vatCode: z.string().nullish(),
+      }),
+    )
+    .default([]),
 })
 export type JournalEntry = z.infer<typeof JournalEntry>
 
@@ -384,6 +420,17 @@ export class Fiken {
     return this.create(this.company("/contacts"), contact)
   }
 
+  /** A contact with every field Fiken returns, for a PUT that must keep them. */
+  async getContactRaw(id: number): Promise<Record<string, unknown>> {
+    const res = await this.request("GET", this.company(`/contacts/${id}`))
+    return z.record(z.string(), z.unknown()).parse(await res.json())
+  }
+
+  /** Replaces a contact; send back what `getContactRaw` gave, with the changes. */
+  async updateContact(id: number, contact: Record<string, unknown>): Promise<void> {
+    await this.request("PUT", this.company(`/contacts/${id}`), { json: contact })
+  }
+
   getContact(id: number) {
     return this.get(Contact, this.company(`/contacts/${id}`))
   }
@@ -443,7 +490,7 @@ export class Fiken {
     return this.getAll(SaleResult, this.company("/sales"), { dateGe: from, dateLe: to })
   }
 
-  createPurchase(purchase: PurchaseRequest) {
+  createPurchase(purchase: PurchaseRequest | CurrencyPurchaseRequest) {
     return this.create(this.company("/purchases"), purchase)
   }
 

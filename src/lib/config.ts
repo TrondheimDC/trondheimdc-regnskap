@@ -155,7 +155,8 @@ const UtleggRule = z.object({
 const UtleggConfig = z
   .object({
     /** Substring of the inbox document's name or filename, e.g. "expense-report". */
-    inboxName: z.string().min(1),
+    /** Substring(s) of the inbox document's name or filename, e.g. "expense-report" (v1) and "utleggsrapport" (v2). */
+    inboxName: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
     /** Due date: this many days after the report was made. */
     dueDays: z.int().min(0).max(90).default(14),
     categories: z.array(UtleggCategory).min(1),

@@ -14,7 +14,7 @@ export interface PageImage {
   width: number
   height: number
   transform: PageTransform
-  /** Bounding box of the page's text, in page pixels at scale 1. */
+  /** Bounding box of what is drawn on the page (text, images, lines), in page pixels at scale 1. */
   content: Rect
 }
 
@@ -78,6 +78,14 @@ export async function renderPdfPage(data: Uint8Array, page: number, scale = 3): 
       content.right = Math.max(content.right, r.right)
       content.bottom = Math.max(content.bottom, r.bottom)
     }
+    // Text alone misses a photo or a scanned receipt, leaving only its header in view.
+    const ink = inkBounds(canvas, base.width / canvas.width)
+    if (ink) {
+      content.left = Math.min(content.left, ink.left)
+      content.top = Math.min(content.top, ink.top)
+      content.right = Math.max(content.right, ink.right)
+      content.bottom = Math.max(content.bottom, ink.bottom)
+    }
     if (!Number.isFinite(content.left))
       Object.assign(content, { left: 0, top: 0, right: base.width, bottom: base.height })
 
@@ -91,5 +99,48 @@ export async function renderPdfPage(data: Uint8Array, page: number, scale = 3): 
     }
   } finally {
     await pdf.loadingTask.destroy()
+  }
+}
+
+/** Width the page is scanned at for drawn content: enough to find the edges within a few points. */
+const INK_SCAN_WIDTH = 200
+
+/**
+ * The box around everything that isn't white paper on the rendered page, in page pixels at scale 1
+ * (`unit` is page pixels per canvas pixel). Scans a small copy, so it costs a few milliseconds.
+ */
+function inkBounds(canvas: HTMLCanvasElement, unit: number): Rect | undefined {
+  const w = INK_SCAN_WIDTH
+  const h = Math.max(1, Math.round((canvas.height / canvas.width) * w))
+  const small = document.createElement("canvas")
+  small.width = w
+  small.height = h
+  const ctx = small.getContext("2d", { willReadFrequently: true })
+  if (!ctx) return undefined
+  ctx.fillStyle = "#fff"
+  ctx.fillRect(0, 0, w, h)
+  ctx.drawImage(canvas, 0, 0, w, h)
+  const { data } = ctx.getImageData(0, 0, w, h)
+  let left = w
+  let top = h
+  let right = -1
+  let bottom = -1
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4
+      // Off-white counts as paper, so faint scan noise and anti-aliasing don't widen the box.
+      if (data[i]! > 235 && data[i + 1]! > 235 && data[i + 2]! > 235) continue
+      if (x < left) left = x
+      if (x > right) right = x
+      if (y < top) top = y
+      if (y > bottom) bottom = y
+    }
+  if (right < 0) return undefined
+  const scale = (canvas.width / w) * unit
+  return {
+    left: left * scale,
+    top: top * scale,
+    right: (right + 1) * scale,
+    bottom: (bottom + 1) * scale,
   }
 }

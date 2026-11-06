@@ -8,7 +8,16 @@
 // is matched in bankavstemmingen like any supplier invoice. Nothing here prints or prompts.
 
 import type { UtleggConfig } from "./config.ts"
-import type { Account, Contact, ContactRequest, Fiken, InboxDocument, OrderLine } from "./fiken.ts"
+import type {
+  Account,
+  Contact,
+  ContactRequest,
+  CurrencyOrderLine,
+  Fiken,
+  InboxDocument,
+  OrderLine,
+  ResultLine,
+} from "./fiken.ts"
 import {
   buildUtleggPlan,
   type UtleggChoices,
@@ -50,16 +59,26 @@ export async function listUtleggDocuments(
   client: Fiken,
   utlegg: UtleggConfig,
 ): Promise<InboxDocument[]> {
-  const needle = utlegg.inboxName.toLowerCase()
-  const docs = await client.inbox({ status: "all" })
-  return docs.filter(
-    (d) => d.name.toLowerCase().includes(needle) || d.filename.toLowerCase().includes(needle),
+  const needles = (Array.isArray(utlegg.inboxName) ? utlegg.inboxName : [utlegg.inboxName]).map(
+    (n) => n.toLowerCase(),
   )
+  const docs = await client.inbox({ status: "all" })
+  return docs.filter((d) => {
+    const name = `${d.name} ${d.filename}`.toLowerCase()
+    return needles.some((needle) => name.includes(needle))
+  })
 }
 
-/** The person in Fiken, or the contact we would create. */
+/** What booking fills in on a contact in Fiken that lacks it. Never overwrites a value. */
+export interface ContactUpdate {
+  email?: string
+  /** Norwegian account number, 11 digits. */
+  bankAccountNumber?: string
+}
+
+/** The person in Fiken (with what we would fill in), or the contact we would create. */
 export type UtleggPerson =
-  | { status: "found"; contact: Contact; by: "email" | "name" }
+  | { status: "found"; contact: Contact; by: "email" | "name"; update?: ContactUpdate }
   | { status: "new"; contact: ContactRequest }
 
 export type UtleggExisting =
@@ -140,16 +159,14 @@ export async function inspectUtlegg(
   const company = await client.getCompany()
 
   if (!report.name.trim()) blockers.push("Fant ikke navnet på personen i rapporten")
-  if (report.payoutCurrency !== "NOK")
-    blockers.push(
-      `Utbetaling i ${report.payoutCurrency} til konto i utlandet støttes ikke ennå. Før kravet for hånd i Fiken.`,
-    )
   if (options.attach && source.doc?.status)
     blockers.push(`Dokumentet «${source.doc.name}» er allerede brukt som bilag i Fiken`)
 
   const person = report.name.trim() ? await findPerson(client, report, blockers) : undefined
   if (person?.status === "found") {
-    const c = person.contact
+    // The list can leave out fields; the contact itself has them all.
+    const c = await client.getContact(person.contact.contactId).catch(() => person.contact)
+    person.contact = c
     if (!c.supplier)
       blockers.push(
         `${c.name} (kontakt ${c.contactId}) finnes i Fiken, men ikke som leverandør. Huk av «Leverandør» på kontakten i Fiken.`,
@@ -159,10 +176,11 @@ export async function inspectUtlegg(
       blockers.push(
         `Kontonummeret på ${c.name} i Fiken (${c.bankAccountNumber}) er ikke det samme som i rapporten (${report.bankAccount}). Sjekk med personen og rett det i Fiken før utbetaling.`,
       )
-    else if (report.bankAccount && !fikenAccount)
-      notes.push(
-        `${c.name} har ikke kontonummer i Fiken. Legg inn ${report.bankAccount} før utbetaling.`,
-      )
+    const update: ContactUpdate = {
+      ...(report.email && !c.email ? { email: report.email } : {}),
+      ...(report.bankAccount && !fikenAccount ? { bankAccountNumber: report.bankAccount } : {}),
+    }
+    if (Object.keys(update).length > 0) person.update = update
     if (person.by === "name")
       notes.push(`Fant ${c.name} på navn, ikke e-post. Sjekk at det er riktig person.`)
   }
@@ -190,8 +208,7 @@ async function findUtleggPurchase(
 ): Promise<UtleggExisting | undefined> {
   if (person?.status === "found") {
     const purchases = await client.purchasesFrom(person.contact.contactId)
-    const gross = (p: (typeof purchases)[number]) =>
-      p.lines.reduce((s, l) => s + (l.netPrice ?? 0) + (l.vat ?? 0), 0)
+    const gross = (p: (typeof purchases)[number]) => linesGross(p.lines, plan.currency)
     const same = purchases.find(
       (p) =>
         !p.deleted &&
@@ -243,11 +260,34 @@ export function utleggOrderLines(lines: UtleggPlanLine[]): OrderLine[] {
   }))
 }
 
+/** The same lines for a purchase in another currency: amounts in that currency. */
+export function utleggCurrencyLines(lines: UtleggPlanLine[]): CurrencyOrderLine[] {
+  return lines.map(({ description, netPrice, vat, account, vatType }) => ({
+    description,
+    netPriceInCurrency: netPrice,
+    vatInCurrency: vat,
+    account,
+    vatType,
+  }))
+}
+
+/** Sum of a purchase's lines as Fiken has them, in the purchase's currency. */
+function linesGross(lines: ResultLine[], currency: string): number {
+  return lines.reduce(
+    (s, l) =>
+      s +
+      (currency === "NOK"
+        ? (l.netPrice ?? 0) + (l.vat ?? 0)
+        : (l.netPriceInCurrency ?? 0) + (l.vatInCurrency ?? 0)),
+    0,
+  )
+}
+
 export interface UtleggBookResult {
   /** What was done, in order; on failure these are what exists in Fiken. */
   steps: string[]
-  /** The purchase as Fiken booked it, against the report total. */
-  total?: { actual: number; expected: number }
+  /** The purchase as Fiken booked it, against the report total, in the payout currency. */
+  total?: { actual: number; expected: number; currency?: string }
 }
 
 /**
@@ -278,8 +318,13 @@ export async function bookUtlegg(
     step(`${person.contact.name} lagt inn som leverandør (kontakt ${supplierId})`)
   } else {
     supplierId = person.contact.contactId
+    if (person.update) {
+      // Before the purchase: if Fiken refuses the update, nothing is booked yet.
+      const current = await client.getContactRaw(supplierId)
+      await client.updateContact(supplierId, writableContact(current, person.update))
+      step(`${describeUpdate(person.update)} lagt inn på ${person.contact.name} i Fiken`)
+    }
   }
-  const lines = utleggOrderLines(plan.lines)
 
   if (mode === "draft") {
     const draftId = await client.createPurchaseDraft({
@@ -288,9 +333,10 @@ export async function bookUtlegg(
       dueDate: plan.dueDate,
       cash: false,
       paid: false,
-      currency: "NOK",
+      currency: plan.currency,
       contactId: supplierId,
-      lines: lines.map((l) => ({
+      // Draft lines are in the draft's currency.
+      lines: plan.lines.map((l) => ({
         text: l.description,
         vatType: l.vatType,
         incomeAccount: l.account,
@@ -306,16 +352,20 @@ export async function bookUtlegg(
     return { steps }
   }
 
-  const purchaseId = await client.createPurchase({
+  const purchase = {
     identifier: plan.reference,
     date: plan.date,
     dueDate: plan.dueDate,
-    kind: "supplier",
+    kind: "supplier" as const,
     paid: false,
-    currency: "NOK",
-    lines,
+    currency: plan.currency,
     supplierId,
-  })
+  }
+  const purchaseId = await client.createPurchase(
+    plan.currency === "NOK"
+      ? { ...purchase, lines: utleggOrderLines(plan.lines) }
+      : { ...purchase, lines: utleggCurrencyLines(plan.lines) },
+  )
   step(
     `Kjøp bokført som gjeld til ${person.contact.name} (id ${purchaseId}), forfall ${plan.dueDate}`,
   )
@@ -330,13 +380,54 @@ export async function bookUtlegg(
   return {
     steps,
     total: {
-      actual: booked.lines.reduce((s, l) => s + (l.netPrice ?? 0) + (l.vat ?? 0), 0),
+      actual: linesGross(booked.lines, plan.currency),
       expected: plan.gross,
+      currency: plan.currency,
     },
   }
+}
+
+/**
+ * The contact as sent back in a PUT: the fields Fiken lets us write, as Fiken has them, plus what
+ * we fill in. Read-only fields (ids, ledger accounts, notes) are left out.
+ */
+const WRITABLE_CONTACT_FIELDS = [
+  "name",
+  "email",
+  "organizationNumber",
+  "customer",
+  "supplier",
+  "bankAccountNumber",
+  "language",
+  "inactive",
+  "daysUntilInvoicingDueDate",
+  "discount",
+  "address",
+  "groups",
+] as const
+
+export function writableContact(
+  current: Record<string, unknown>,
+  update: ContactUpdate,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {}
+  for (const key of WRITABLE_CONTACT_FIELDS)
+    if (current[key] !== undefined && current[key] !== null) body[key] = current[key]
+  return { ...body, ...update }
+}
+
+/** "E-post og kontonummer 1234 56 78903" */
+export function describeUpdate(u: ContactUpdate): string {
+  const parts = [
+    u.email && `e-post ${u.email}`,
+    u.bankAccountNumber && `kontonummer ${u.bankAccountNumber}`,
+  ]
+    .filter(Boolean)
+    .join(" og ")
+  return parts.charAt(0).toUpperCase() + parts.slice(1)
 }
 
 export const describePerson = (p: UtleggPerson) =>
   p.status === "new"
     ? `Ny leverandør: ${p.contact.name}${p.contact.email ? `, ${p.contact.email}` : ""}${p.contact.bankAccountNumber ? `, konto ${p.contact.bankAccountNumber}` : ""}`
-    : `Leverandør: ${p.contact.name} (${p.contact.supplierAccountCode ?? p.contact.contactId})`
+    : `Leverandør: ${p.contact.name} (${p.contact.supplierAccountCode ?? p.contact.contactId})${p.update ? `; legger inn ${describeUpdate(p.update).toLowerCase()}` : ""}`

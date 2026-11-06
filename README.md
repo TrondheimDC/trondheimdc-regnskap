@@ -1,6 +1,6 @@
 # TDC Regnskap
 
-Books Checkin's monthly accounting report in Fiken: one sale (ticket revenue), one purchase (Checkin fees), and one fri postering per payout to the bank. Also books the hotel's conference invoice as one supplier purchase, split into categories.
+Books Checkin's monthly accounting report in Fiken: one sale (ticket revenue), one purchase (Checkin fees), and one fri postering per payout to the bank. Also books the hotel's conference invoice as one supplier purchase, split into categories. And books utleggsrapporter (expense claims) from the utlegg form as one supplier purchase from the person, a line per receipt.
 
 The web app and `pnpm foring` share `src/lib`. Nothing is written to Fiken until the numbers have been checked and you confirm.
 
@@ -48,6 +48,9 @@ pnpm foring report --mode create  # book, after confirmation
 pnpm foring check --month 2026-03 # check a booked month against its bilag
 pnpm foring hotell                # dry-run: the hotel's conference invoice (EHF) from Fiken
 pnpm foring hotell --mode create  # book it, after confirmation
+pnpm foring utlegg                # dry-run: an utleggsrapport from the inbox
+pnpm foring utlegg --mode create  # book it, after confirmation
+pnpm foring utlegg-history        # read-only: how utlegg were booked before
 ```
 
 The token is stored in `~/.config/trondheimdc-regnskap/oauth-token.json`. Tests use a generated PDF (`test/pdf-fixture.ts`). Do not commit a real regnskapsbilag.
@@ -56,6 +59,6 @@ The token is stored in `~/.config/trondheimdc-regnskap/oauth-token.json`. Tests 
 
 | Doc | Contents |
 |---|---|
-| [docs/foring.md](docs/foring.md) | How a month is booked, the checks, the fri posteringer, and the hotel invoice |
+| [docs/foring.md](docs/foring.md) | How a month is booked, the checks, the fri posteringer, the hotel invoice, and utlegg |
 | [docs/deploy.md](docs/deploy.md) | Fiken app, nginx, and DNS. GitHub Actions are off until we deploy |
 | [TODO.md](TODO.md) | What is still unverified against Fiken |

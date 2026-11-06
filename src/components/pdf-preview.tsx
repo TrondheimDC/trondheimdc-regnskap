@@ -36,8 +36,8 @@ function cropRect(image: PageImage, rects: Rect[]): Rect {
   }
 }
 
-/** The text on the page with a little margin. */
-function textRect(image: PageImage): Rect {
+/** What is drawn on the page (text, images) with a little margin. */
+function contentRect(image: PageImage): Rect {
   const { content } = image
   return {
     left: Math.max(0, content.left - 16),
@@ -85,12 +85,12 @@ export function PdfPreview({
   const scroller = useRef<HTMLDivElement>(null)
   const placed = marks.map((m) => ({ mark: m, rect: markRect(image, m) }))
   const rects = placed.map((p) => p.rect)
-  // With marks: down to below the last one. Without: the text on the page, without the margins.
+  // With marks: down to below the last one. Without: what is drawn on the page, without the margins.
   const crop: Rect = whole
     ? { left: 0, top: 0, right: image.width, bottom: image.height }
     : rects.length > 0
       ? cropRect(image, rects)
-      : textRect(image)
+      : contentRect(image)
   const cw = crop.right - crop.left
   const ch = crop.bottom - crop.top
 
@@ -123,7 +123,7 @@ export function PdfPreview({
           {pager?.loading ? <Spinner className="size-3.5 shrink-0" /> : null}
         </button>
         <div className={cn("flex items-center gap-1", !open && "hidden lg:flex")}>
-          {/* A page without marks is always shown whole. */}
+          {/* A page without marks shows all that is drawn on it, so there is nothing to toggle. */}
           {rects.length > 0 ? (
             <Button
               variant="ghost"

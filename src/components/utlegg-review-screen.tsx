@@ -14,10 +14,11 @@ import {
   Undo2,
   UserRound,
 } from "lucide-react"
-import { useMemo, useState } from "react"
+import { Fragment, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { AccountPicker } from "@/components/account-picker"
 import { BookConfirmDialog, type BookMode, type BookRun } from "@/components/book-confirm-dialog"
+import { ChoicePicker } from "@/components/choice-picker"
 import { BookedTotal, ChecksCard } from "@/components/hotel-review-screen"
 import { MarkedAmount, MarkProvider, MarkRow, useMarksFor } from "@/components/marks"
 import { PagedPdfPreview } from "@/components/pdf-preview"
@@ -35,11 +36,12 @@ import { formatDay } from "@/lib/format"
 import { RATE_LABEL } from "@/lib/hotel"
 import { buildUtleggMarks } from "@/lib/marks"
 import { pdfPageCount, renderPdfPage } from "@/lib/pdf-render"
-import { formatNok } from "@/lib/plan"
+import { formatMoney, formatNok } from "@/lib/plan"
 import { cn } from "@/lib/utils"
 import { parseUtleggPdf, type UtleggPlacement, type UtleggPlan } from "@/lib/utlegg"
 import {
   bookUtlegg,
+  describeUpdate,
   inspectUtlegg,
   prepareUtlegg,
   type UtleggFikenState,
@@ -295,13 +297,19 @@ function ConfirmDialog({
           label: `Kjøp fra ${source.report.name}`,
           detail: `${plan.lines.length} kvitteringer · forfall ${formatDay(plan.dueDate)}`,
           amount: plan.gross,
+          currency: plan.currency,
         },
       ]}
       notes={[
         person?.status === "new" &&
           `${person.contact.name} legges inn som leverandør${person.contact.bankAccountNumber ? ` med konto ${person.contact.bankAccountNumber}` : ""}.`,
+        person?.status === "found" &&
+          person.update &&
+          `${describeUpdate(person.update)} legges inn på ${person.contact.name} i Fiken.`,
         "Utleggsrapporten legges ved.",
         "Står som ubetalt gjeld til personen til økonomiansvarlig betaler den fra Fiken.",
+        plan.currency !== "NOK" &&
+          `Kjøpet føres i ${plan.currency}; Fiken regner det om til NOK. IBAN og BIC står i utleggsrapporten.`,
         mode === "create" && "Bokførte bilag kan bare rettes ved å annullere dem i Fiken.",
       ]}
       run={run}
@@ -409,8 +417,11 @@ function UtleggReview({
               Kvitteringene
             </SectionLabel>
             <p className="-mt-1 text-xs text-[var(--color-fg-base)]/50">
-              Oppskriften foreslår kategori ut fra beskrivelsen. Mva-satsen leses fra kvitteringen
-              når den har tekst; ellers settes den etter kategori og må sjekkes mot bildet.
+              {source.report.format === 2
+                ? "Kategorien er den personen valgte i skjemaet."
+                : "Oppskriften foreslår kategori ut fra beskrivelsen."}{" "}
+              Flytt en kvittering hvis den hører hjemme et annet sted. Mva-satsen leses fra
+              kvitteringen når den har tekst, ellers settes den etter kategori.
             </p>
             <ul className="flex flex-col gap-3">
               {plan.placements.map((p) => (
@@ -516,7 +527,10 @@ function Totals({
   const items = [
     { label: "Dato (siste kvittering)", value: plan.date ? formatDay(plan.date) : "–" },
     { label: "Forfall", value: formatDay(plan.dueDate) },
-    { label: "Total", value: report.total !== undefined ? formatNok(report.total) : "–" },
+    {
+      label: "Total",
+      value: report.total !== undefined ? formatMoney(report.total, plan.currency) : "–",
+    },
   ]
   return (
     <section className="@container flex flex-col gap-3 rounded-xl bg-[var(--color-bg-surface)] p-4 sm:p-5">
@@ -524,6 +538,7 @@ function Totals({
         <p className="text-sm text-[var(--color-fg-base)]/60">
           {report.rows.length} kvitteringer
           {report.generated ? ` · sendt ${formatDay(report.generated)}` : ""}
+          {report.reportId ? ` · ${report.reportId}` : ""}
         </p>
         <StatusBadge blocked={blocked} failed={failed} />
       </div>
@@ -546,17 +561,32 @@ function PersonCard({ prepared, fiken }: { prepared: UtleggPrepared; fiken: Utle
   const { report } = prepared.source
   const person = fiken.person
   const account = report.bankAccount ?? report.iban
+  const found = person?.status === "found" ? person : undefined
+  // What the report says next to what Fiken has, so a gap in Fiken isn't read as a parsing error.
+  const rows = [
+    {
+      label: "E-post",
+      report: report.email,
+      fiken: found ? found.contact.email : undefined,
+      fills: found?.update?.email !== undefined,
+    },
+    {
+      label: "Konto",
+      report: account,
+      // Fiken stores only Norwegian account numbers on a contact; an IBAN stays in the report.
+      fiken: report.iban
+        ? "lagres ikke (IBAN)"
+        : found
+          ? found.contact.bankAccountNumber
+          : undefined,
+      fills: found?.update?.bankAccountNumber !== undefined,
+    },
+  ]
   return (
     <Card
       icon={<UserRound />}
       title={report.name || "Ukjent navn"}
-      subtitle={[
-        report.email,
-        account && `konto ${account}`,
-        `utbetaling i ${report.payoutCurrency}`,
-      ]
-        .filter(Boolean)
-        .join(" · ")}
+      subtitle={`Utbetaling i ${report.payoutCurrency}`}
       aside={
         person?.status === "new" ? (
           <Badge>Ny leverandør</Badge>
@@ -565,11 +595,36 @@ function PersonCard({ prepared, fiken }: { prepared: UtleggPrepared; fiken: Utle
         ) : null
       }
     >
+      {found ? (
+        <dl className="mt-4 grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
+          <span />
+          <span className="text-xs text-[var(--color-fg-base)]/50">I rapporten</span>
+          <span className="text-xs text-[var(--color-fg-base)]/50">I Fiken</span>
+          {rows.map((r) => (
+            <Fragment key={r.label}>
+              <dt className="text-[var(--color-fg-base)]/60">{r.label}</dt>
+              <dd className="truncate tabular-nums">{r.report ?? "–"}</dd>
+              <dd
+                className={cn(
+                  "truncate tabular-nums",
+                  !r.fiken && "text-[var(--color-fg-base)]/60",
+                )}
+              >
+                {r.fiken ?? (r.fills ? "mangler, legges inn" : "mangler")}
+              </dd>
+            </Fragment>
+          ))}
+        </dl>
+      ) : null}
       <p className="mt-3 text-sm text-[var(--color-fg-base)]/70">
         {person?.status === "new"
           ? "Finnes ikke i Fiken. Legges inn som leverandør med e-post og kontonummer når du fører."
-          : person
-            ? `Funnet i Fiken på ${person.by === "email" ? "e-post" : "navn"}: ${person.contact.name} (kontakt ${person.contact.contactId}).`
+          : found
+            ? `Funnet i Fiken på ${found.by === "email" ? "e-post" : "navn"}: kontakt ${found.contact.contactId}.${
+                found.update
+                  ? ` ${describeUpdate(found.update)} legges inn på kontakten når du fører.`
+                  : ""
+              }`
             : "Kan ikke avgjøre hvem i Fiken dette er; se kontrollene."}
       </p>
       {fiken.notes.length > 0 ? (
@@ -598,9 +653,6 @@ const RATE_BY: Record<NonNullable<UtleggPlacement["rateBy"]>, string> = {
 
 const RATES: VatRate[] = [25, 15, 12, 0]
 
-const selectClass =
-  "h-8 max-w-[14rem] cursor-pointer truncate rounded-lg border border-white/15 bg-[var(--color-bg-base)] px-2 text-sm text-[var(--color-fg-base)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-fg-brand)]"
-
 function ReceiptRow({
   utlegg,
   placement: p,
@@ -618,7 +670,6 @@ function ReceiptRow({
 }) {
   const marks = useMarksFor([`row:${p.row.n}`])
   const line = plan.lines.find((l) => l.n === p.row.n)
-  const known = p.category !== undefined && utlegg.categories.some((c) => c.id === p.category)
   const unplaced = !line
   const guessed = p.rateBy === "category" && line?.deduct
   return (
@@ -641,47 +692,34 @@ function ReceiptRow({
           .join(" · ")}
         aside={
           <MarkedAmount marks={marks} className="shrink-0 pt-0.5 text-lg">
-            {p.row.amount === undefined ? "—" : formatNok(p.row.amount)}
+            {p.row.amount === undefined ? "—" : formatMoney(p.row.amount, plan.currency)}
           </MarkedAmount>
         }
         marks={marks}
         className={cn(unplaced && "ring-1 ring-[var(--color-bg-danger)]")}
       >
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          <select
-            aria-label={`Kategori for kvittering ${p.row.n}`}
-            value={known ? p.category : ""}
-            onChange={(e) => e.target.value && onCategory(e.target.value)}
-            className={selectClass}
-          >
-            {!known ? (
-              <option value="" disabled>
-                Velg kategori
-              </option>
-            ) : null}
-            {utlegg.categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label={`Mva-sats for kvittering ${p.row.n}`}
-            value={p.rate === undefined ? "" : String(p.rate)}
-            onChange={(e) => e.target.value && onRate(Number(e.target.value) as VatRate)}
-            className={selectClass}
-          >
-            {p.rate === undefined ? (
-              <option value="" disabled>
-                Velg mva-sats
-              </option>
-            ) : null}
-            {RATES.map((r) => (
-              <option key={r} value={r}>
-                {RATE_LABEL(r)}
-              </option>
-            ))}
-          </select>
+          <ChoicePicker
+            label={`Kategori for kvittering ${p.row.n}`}
+            value={p.category}
+            choices={utlegg.categories.map((c) => ({
+              value: c.id,
+              label: c.label,
+              hint: `Konto ${c.account}`,
+            }))}
+            placeholder="Velg kategori"
+            onChange={onCategory}
+            className="w-[14rem]"
+          />
+          <ChoicePicker
+            label={`Mva-sats for kvittering ${p.row.n}`}
+            value={p.rate}
+            choices={RATES.map((r) => ({ value: r, label: RATE_LABEL(r) }))}
+            placeholder="Velg mva-sats"
+            invalid={guessed}
+            onChange={onRate}
+            className="w-[9rem]"
+          />
           {onShow ? (
             <Button variant="ghost" size="xs" onClick={onShow}>
               <FileText className="size-3.5" aria-hidden />
@@ -700,6 +738,7 @@ function ReceiptRow({
             line && (line.deduct ? "fradrag" : line.rate === 0 ? "" : "uten fradrag"),
             p.row.receiptRates.length > 1 &&
               `kvitteringen nevner ${p.row.receiptRates.map((r) => `${r} %`).join(" og ")}`,
+            p.by === "form" && "kategori valgt i skjemaet",
             p.by === "moved" && "flyttet",
           ]
             .filter(Boolean)
@@ -740,7 +779,9 @@ function AccountsCard({
             >
               <label htmlFor={`account-${c.id}`} className="min-w-0 text-sm">
                 <span className="font-semibold">{c.label}</span>{" "}
-                <span className="tabular text-[var(--color-fg-base)]/60">{formatNok(sum)}</span>
+                <span className="tabular text-[var(--color-fg-base)]/60">
+                  {formatMoney(sum, plan.currency)}
+                </span>
               </label>
               <AccountPicker
                 id={`account-${c.id}`}
@@ -767,20 +808,26 @@ function PurchaseCard({ plan, name }: { plan: UtleggPlan; name: string }) {
     >
       <ul className="mt-4 flex flex-col gap-1">
         {plan.lines.map((l) => (
-          <PurchaseLine key={l.n} line={l} />
+          <PurchaseLine key={l.n} line={l} currency={plan.currency} />
         ))}
       </ul>
       <div className="mt-3 flex items-baseline justify-between gap-3 border-t border-white/10 pt-3">
         <span className="text-sm text-[var(--color-fg-base)]/70">Sum inkl. mva</span>
         <MarkedAmount marks={total} className="text-xl">
-          {formatNok(plan.gross)}
+          {formatMoney(plan.gross, plan.currency)}
         </MarkedAmount>
       </div>
     </Card>
   )
 }
 
-function PurchaseLine({ line: l }: { line: UtleggPlan["lines"][number] }) {
+function PurchaseLine({
+  line: l,
+  currency,
+}: {
+  line: UtleggPlan["lines"][number]
+  currency: string
+}) {
   const marks = useMarksFor([`row:${l.n}`])
   return (
     <MarkRow marks={marks} className="py-1.5">
@@ -795,10 +842,10 @@ function PurchaseLine({ line: l }: { line: UtleggPlan["lines"][number] }) {
           </span>
         </span>
         <span className="flex shrink-0 flex-col items-end gap-1">
-          <MarkedAmount marks={[]}>{formatNok(l.netPrice)}</MarkedAmount>
+          <MarkedAmount marks={[]}>{formatMoney(l.netPrice, currency)}</MarkedAmount>
           {l.vat ? (
             <MarkedAmount marks={[]} className="text-sm text-[var(--color-fg-base)]/70">
-              mva {formatNok(l.vat)}
+              mva {formatMoney(l.vat, currency)}
             </MarkedAmount>
           ) : null}
         </span>

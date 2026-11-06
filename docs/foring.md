@@ -404,3 +404,63 @@ pnpm foring hotell --account lokaler=4590           # annen konto for en kategor
 pnpm foring hotell --mode create                    # fører, etter bekreftelse
 pnpm foring chart                                   # kontoplanen i Fiken (4000–8999)
 ```
+
+## Utlegg
+
+En utleggsrapport fra utleggsskjemaet ([trondheimdc-utlegg](https://github.com/TrondheimDC/trondheimdc-utlegg)) føres som **ett leverandørkjøp** med personen som leverandør og én linje per kvittering. Økonomiansvarlig betaler kjøpet fra Fiken, og betalingen kobles i bankavstemmingen. Oppskriften står under `utlegg` i `regnskap.config.json`.
+
+- **Web-app:** forsiden viser utleggsrapportene i innboksen under «Utlegg». En lokal PDF som er en utleggsrapport åpnes også her.
+- **CLI:** `pnpm foring utlegg` henter rapporten fra innboksen. Se under.
+
+### Hva som leses
+
+Rapporten finnes i innboksen på `expense-report` i filnavnet (`inboxName`). Begge versjonene av skjemaet leses:
+
+- **Format 2** (fra november 2026, `format-2` i PDF-metadataene): rapport-ID, personen, kontoen, antall kvitteringer, tabellen med kategorien personen valgte, og en side per kvittering. Formatet er beskrevet i `docs/pdf-format.md` i utlegg-repoet.
+- **Format 1** (eldre): personen, kontoen og tabellen fra side 1. Kategorien gjettes fra beskrivelsen med reglene i oppskriften.
+
+Mva-satsen leses fra teksten på kvitteringen når den har tekst. Et bilde har ingen tekst, og da brukes kategoriens sats. Kvitteringer i utenlandsk valuta får ingen norsk mva.
+
+### Kategorier
+
+Kategorien fra skjemaet brukes som den er. Uten den (format 1) foreslår den første regelen som passer en kategori. I gjennomgangen kan du flytte en kvittering til en annen kategori, velge mva-sats og bytte konto per kategori. `crew` og `representasjon` finnes ikke i skjemaet og må velges i gjennomgangen.
+
+«Støtte til meetups» er penger foreningen gir til en annen part, for eksempel en meetup-gruppes Meetup.com-abonnement. Den holdes adskilt fra programvare foreningen bruker selv.
+
+Om en kategori trekker fra mva (`deduct`), styres i oppskriften. Linjer uten fradrag føres med bruttobeløpet uten mva.
+
+### Kontroller
+
+- Kvitteringene mot summen i rapporten, og kjøpet mot summen.
+- Alle kvitteringene har kategori og mva-sats.
+- Mva-satser som ikke er lest fra kvitteringen, må bekreftes (bare når kategorien trekker fra mva).
+- Kvitteringer som nevner flere mva-satser.
+- Kvitteringer fra flere mva-terminer eller år.
+- Kontonummer som ikke ble validert i skjemaet.
+- Format 2: antall rader mot «Antall kvitteringer», og en side for hver kvittering.
+
+Mot Fiken: personen finnes som leverandør (på e-post, ellers på navn), kontonummeret i Fiken er det samme som i rapporten, kontoene finnes, rapporten er ikke brukt som bilag, og kravet er ikke ført fra før.
+
+### Føringen
+
+| | |
+|---|---|
+| Type | Leverandørkjøp på personen (leverandørreskontro 2400:xxxxx), **ikke betalt** |
+| Leverandør | Personen. Finnes den ikke, legges den inn med navn, e-post og norsk kontonummer. Mangler kontakten e-post eller kontonummer, fylles de inn fra rapporten. |
+| Dato / forfall | Siste kvitterings dato / rapportens dato pluss `dueDays` |
+| Referanse | `Utlegg <rapport-ID> <navn>` (format 1: `Utlegg <dato> <navn>`) |
+| Valuta | Utbetalingsvalutaen. Et krav i EUR føres i EUR, og Fiken regner om til NOK. Et IBAN lagres ikke på kontakten; det står i rapporten. |
+| Vedlegg | Utleggsrapporten |
+
+```sh
+pnpm foring utlegg                         # dry-run: rapporten i innboksen
+pnpm foring utlegg --inbox-doc 123         # velg dokumentet hvis det er flere
+pnpm foring utlegg rapport.pdf             # lokal PDF
+pnpm foring utlegg --category "#2=utstyr"  # flytt en kvittering
+pnpm foring utlegg --rate "#3=12"          # velg mva-sats
+pnpm foring utlegg --account reise=7140    # annen konto for en kategori
+pnpm foring utlegg --mode create           # fører, etter bekreftelse
+pnpm foring utlegg-history 2026            # bare lesing: hvordan utlegg er ført i Fiken før
+```
+
+Uten nettleserinnlogging kan CLI-en bruke en personlig API-nøkkel: sett `FIKEN_API_TOKEN` i `.env.local`. CLI-en leser `.env.local` og `.env`.

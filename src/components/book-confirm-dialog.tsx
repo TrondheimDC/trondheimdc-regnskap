@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { formatNok } from "@/lib/plan"
+import { formatMoney } from "@/lib/plan"
 
 export type BookMode = "draft" | "create"
 
@@ -25,6 +25,8 @@ export interface ConfirmItem {
   /** Account, supplier or other detail under the label. */
   detail?: string
   amount: number
+  /** Currency of `amount` when not NOK. */
+  currency?: string
 }
 
 /** A booking under way or done, shown in place of the plan. */
@@ -112,7 +114,9 @@ export function BookConfirmDialog({
                       </span>
                     ) : null}
                   </span>
-                  <span className="tabular shrink-0">{formatNok(item.amount)}</span>
+                  <span className="tabular shrink-0">
+                    {formatMoney(item.amount, item.currency)}
+                  </span>
                 </li>
               ))}
             </ul>

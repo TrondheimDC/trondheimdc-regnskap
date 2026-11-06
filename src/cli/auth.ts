@@ -46,7 +46,7 @@ function oauthClient() {
   const clientId = process.env.FIKEN_CLIENT_ID ?? process.env.NEXT_PUBLIC_FIKEN_CLIENT_ID
   if (!clientId) {
     throw new Error(
-      "Missing NEXT_PUBLIC_FIKEN_CLIENT_ID in .env (the Client ID of your Fiken app, see README: Innlogging)",
+      "Missing NEXT_PUBLIC_FIKEN_CLIENT_ID in .env.local (the Client ID of your Fiken app, see README: Innlogging)",
     )
   }
   return {

@@ -26,7 +26,7 @@ class Page {
 const byteLength = (s: string) => s.length
 const latin1 = (s: string) => Uint8Array.from(s, (c) => c.charCodeAt(0) & 0xff)
 
-function render(pages: Page[]): Uint8Array {
+function render(pages: Page[], info?: Record<string, string>): Uint8Array {
   const esc = (s: string) => s.replace(/[\\()]/g, "\\$&")
   const streams = pages.map((p) =>
     p.texts
@@ -48,6 +48,13 @@ function render(pages: Page[]): Uint8Array {
       `<< /Length ${byteLength(content)} >>\nstream\n${content}\nendstream`,
     ]),
   ]
+  // Document info (Subject, Keywords …), as the last object, for the trailer to point at.
+  if (info)
+    objects.push(
+      `<< ${Object.entries(info)
+        .map(([k, v]) => `/${k} (${esc(v)})`)
+        .join(" ")} >>`,
+    )
   let pdf = "%PDF-1.4\n"
   const offsets: number[] = []
   objects.forEach((obj, i) => {
@@ -57,7 +64,8 @@ function render(pages: Page[]): Uint8Array {
   const xref = byteLength(pdf)
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
   pdf += offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  const infoRef = info ? ` /Info ${objects.length} 0 R` : ""
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R${infoRef} >>\nstartxref\n${xref}\n%%EOF\n`
   return latin1(pdf)
 }
 
@@ -582,6 +590,8 @@ export interface UtleggData {
   receipts: UtleggReceipt[]
   /** Override the printed total, øre. */
   total?: number
+  /** PDF document info, e.g. { Keywords: "utleggsrapport format-2" } as the v2 form sets it. */
+  info?: { Subject?: string; Keywords?: string }
 }
 
 const nok = (ore: number) =>
@@ -691,7 +701,7 @@ export function utleggPdf(data: UtleggData): Uint8Array {
       at(page, 700 - j * 16, line, 120, { size: 10 })
     return page
   })
-  return render([cover, ...receipts])
+  return render([cover, ...receipts], data.info)
 }
 
 /** Three receipts: crew pizza (receipt says 15 %), tape (25 %), and a photo of a taxi receipt. */
@@ -714,5 +724,208 @@ export const UTLEGG_REPORT = utleggPdf({
       text: ["Clas Ohlson", "Totalt 389,00", "Herav mva 25% 77,80"],
     },
     { description: "Taxi Værnes", date: "10.10.2030", amount: 51200 },
+  ],
+})
+
+// ---------------------------------------------------------------------------------------------
+// Utleggsrapport format 2 (trondheimdc-utlegg from November 2026, docs/pdf-format.md there):
+// fields as label over value in two columns, a summary row, a table that may continue on more
+// pages, and a page per receipt headed "Kvittering n av N". Positions are the generator's.
+
+export interface UtleggV2Receipt {
+  description: string
+  /** dd.mm.yyyy */
+  date: string
+  /** Text in the Kategori column, e.g. "Reise" or "Meetup-støtte". */
+  category: string
+  /** In the payout currency, øre; undefined prints "—". */
+  payout?: number
+  /** On the receipt, when it isn't the payout currency: amount in øre and currency. */
+  original?: { amount: number; currency: string; rate: string }
+  /** The receipt's own text lines; none for a photo. */
+  text?: string[]
+}
+
+export interface UtleggV2Data {
+  reportId: string
+  /** dd.mm.yyyy */
+  generated: string
+  /** As printed; the metadata's Author can differ (characters the font lacks print as "?"). */
+  name: string
+  author?: string
+  email: string
+  /** ["Kontonummer", "1234 56 78903"], or IBAN and BIC etc. */
+  bank: [string, string][]
+  currency?: string
+  validationSkipped?: boolean
+  receipts: UtleggV2Receipt[]
+  /** Table rows per page before "Kvitteringer (forts.)". */
+  rowsPerPage?: number
+  /** Override "Antall kvitteringer". */
+  count?: number
+  /** Leave out the receipt pages of these receipts (1-based). */
+  missingPages?: number[]
+  /** Leave out the PDF metadata (format then known from "Rapport-ID" on page 1). */
+  noMetadata?: boolean
+}
+
+export function utleggPdfV2(data: UtleggV2Data): Uint8Array {
+  const currency = data.currency ?? "NOK"
+  const at = (
+    page: Page,
+    y: number,
+    s: string,
+    x: number,
+    opts: { right?: boolean; size?: number } = {},
+  ) => {
+    page.y = y
+    page.text(s, x, { size: 9, ...opts })
+  }
+  const total = data.receipts.reduce((s, r) => s + (r.payout ?? 0), 0)
+  const footer = (page: Page, n: number, of: number) => {
+    at(page, 30, `Utleggsrapport ${data.reportId}`, 48, { size: 7 })
+    at(page, 30, `Side ${n} av ${of}`, 547, { right: true, size: 7 })
+  }
+
+  const cover = new Page()
+  at(cover, 792, "Rapport-ID", 377, { size: 7 })
+  at(cover, 792, "Dato", 494, { size: 7 })
+  at(cover, 779, data.reportId, 377)
+  at(cover, 779, data.generated, 494)
+  at(cover, 724, "Utleggsrapport", 48, { size: 24 })
+  at(cover, 658, "Utlegg fra", 48, { size: 10 })
+  at(cover, 658, "Utbetales til", 312, { size: 10 })
+  const fields = (x: number, list: [string, string][]) => {
+    let y = 634
+    for (const [label, value] of list) {
+      at(cover, y, label, x, { size: 7 })
+      at(cover, y - 13, value, x)
+      y -= 33
+    }
+    return y
+  }
+  const left = fields(48, [
+    ["Navn", data.name],
+    ["Adresse", "Testveien 1, 7010 Trondheim, Norge"],
+    ["E-post", data.email],
+  ])
+  const right = fields(312, [...data.bank, ["Valuta", currency]])
+  let y = Math.min(left, right)
+  if (data.validationSkipped) {
+    at(cover, y, "Kontonummeret er ikke validert", 60)
+    at(cover, y - 13, "Personen godtok at valideringen feilet.", 60, { size: 7 })
+    y -= 40
+  }
+  at(cover, y, "Antall kvitteringer", 64, { size: 7 })
+  at(cover, y, "Periode", 188, { size: 7 })
+  at(cover, y, "Sum", 531, { right: true, size: 7 })
+  const dates = data.receipts.map((r) => r.date)
+  at(cover, y - 19, String(data.count ?? data.receipts.length), 64)
+  at(cover, y - 19, `${dates[0] ?? ""} - ${dates.at(-1) ?? ""}`, 188)
+  at(cover, y - 19, `${nok(total)} ${currency}`, 531, { right: true })
+
+  // The table, continued on more pages when it doesn't fit.
+  const tablePages: Page[] = [cover]
+  const perPage = data.rowsPerPage ?? 14
+  const header = (page: Page, y0: number) => {
+    for (const [s, x] of [
+      ["#", 48],
+      ["Dato", 74],
+      ["Beskrivelse", 136],
+      ["Kategori", 300],
+    ] as const)
+      at(page, y0, s, x, { size: 7 })
+    at(page, y0, "Beløp", 458, { right: true, size: 7 })
+    at(page, y0, `Utbetales (${currency})`, 547, { right: true, size: 7 })
+  }
+  at(cover, y - 65, "Kvitteringer", 48, { size: 10 })
+  header(cover, y - 87)
+  let page = cover
+  let rowY = y - 109
+  for (const [i, r] of data.receipts.entries()) {
+    if (i > 0 && i % perPage === 0) {
+      page = new Page()
+      tablePages.push(page)
+      at(page, 790, "Kvitteringer (forts.)", 48, { size: 10 })
+      header(page, 768)
+      rowY = 746
+    }
+    const lines = wrap(r.description, 36)
+    const amount = r.original ?? { amount: r.payout ?? 0, currency }
+    at(page, rowY, String(i + 1), 48)
+    at(page, rowY, r.date, 74)
+    for (const [j, line] of lines.entries()) at(page, rowY - j * 12, line, 136)
+    at(page, rowY, r.category, 305)
+    at(page, rowY, `${nok(amount.amount)} ${amount.currency}`, 458, { right: true })
+    at(page, rowY, r.payout === undefined ? "—" : nok(r.payout), 547, { right: true })
+    if (r.original) at(page, rowY - 12, r.original.rate, 458, { right: true, size: 7 })
+    rowY -= 21 + (Math.max(lines.length, r.original ? 2 : 1) - 1) * 12
+  }
+  at(page, rowY, "Sum", 48)
+  at(page, rowY, nok(total), 547, { right: true })
+
+  const receiptPages = data.receipts.flatMap((r, i) => {
+    if (data.missingPages?.includes(i + 1)) return []
+    const p = new Page()
+    at(p, 790, `Kvittering ${i + 1} av ${data.receipts.length}`, 48, { size: 11 })
+    at(p, 791, r.category, 543, { right: true, size: 8 })
+    at(p, 771, r.description, 48, { size: 10 })
+    const amount = r.original ?? { amount: r.payout ?? 0, currency }
+    at(p, 756, `${r.date} · ${nok(amount.amount)} ${amount.currency}`, 48, { size: 8 })
+    for (const [j, line] of (r.text ?? []).entries()) at(p, 668 - j * 18, line, 128, { size: 10 })
+    return [p]
+  })
+
+  const all = [...tablePages, ...receiptPages]
+  for (const [i, p] of all.entries()) footer(p, i + 1, all.length)
+  return render(
+    all,
+    data.noMetadata
+      ? undefined
+      : {
+          Title: `Utleggsrapport ${data.reportId} - ${data.author ?? data.name}`,
+          Author: data.author ?? data.name,
+          Subject: "TrondheimDC utleggsrapport, format 2",
+          Keywords: `utleggsrapport format-2 ${data.reportId}`,
+        },
+  )
+}
+
+/** Four receipts with a category each, one in USD, Norwegian account. */
+export const UTLEGG_REPORT_V2 = utleggPdfV2({
+  reportId: "UT-20301106-7KQ2",
+  generated: "06.11.2030",
+  name: "Kari Testesen",
+  email: "kari@example.com",
+  bank: [["Kontonummer", "1234 56 78903"]],
+  receipts: [
+    {
+      description: "Pizza til crew under rigging fredag kveld, 12 store pizza",
+      date: "09.10.2030",
+      category: "Servering",
+      payout: 245050,
+      text: ["Peppes Pizza", "Sum 2 450,50", "Herav MVA 15% 319,63"],
+    },
+    {
+      description: "Teip og kabelstrips til scenen",
+      date: "09.10.2030",
+      category: "Materiell",
+      payout: 38900,
+      text: ["Clas Ohlson", "Totalt 389,00", "Herav mva 25% 77,80"],
+    },
+    {
+      description: "Taxi Værnes - Trondheim S for taler",
+      date: "10.10.2030",
+      category: "Reise",
+      payout: 51200,
+    },
+    {
+      description: "Meetup Pro-abonnement, 6 mnd (Meetup: Trondheim JS)",
+      date: "01.10.2030",
+      category: "Meetup-støtte",
+      payout: 98143,
+      original: { amount: 8994, currency: "USD", rate: "kurs 10,9120" },
+      text: ["Total USD 89.94", "Organizer subscription"],
+    },
   ],
 })

@@ -1,4 +1,5 @@
 #!/usr/bin/env -S npx tsx
+import "./env.ts"
 // Books the monthly Checkin accounting report in Fiken: sale, purchase and a fri postering per payout.
 // Run `pnpm foring help` for usage.
 
@@ -47,7 +48,7 @@ import {
   listHotelInvoices,
   prepareHotel,
 } from "../lib/hotel-booking.ts"
-import { formatMonthNo, formatNok } from "../lib/plan.ts"
+import { formatMoney, formatMonthNo, formatNok } from "../lib/plan.ts"
 import {
   parseRatesArg,
   parseRowChoicesArg,
@@ -57,12 +58,14 @@ import {
 import {
   bookUtlegg,
   describePerson,
+  describeUpdate,
   inspectUtlegg,
   listUtleggDocuments,
   prepareUtlegg,
   type UtleggSource,
   utleggBlockers,
 } from "../lib/utlegg-booking.ts"
+import { pastUtlegg, utleggPractice } from "../lib/utlegg-history.ts"
 import { type Check, explainRounding, isRoundingCheck } from "../lib/verify.ts"
 import { createAuth, hasCredentials, login, logout } from "./auth.ts"
 
@@ -83,6 +86,10 @@ Commands:
   utlegg [file.pdf]   Book an utleggsrapport from the utlegg form as one supplier purchase
                       (unpaid, with due date) from the person: a line per receipt.
                       Without a file the report is fetched from the Fiken inbox.
+  utlegg-history [year]
+                      Read-only: how utlegg were booked in Fiken that year (default: this
+                      year and last): purchases from people and Kontantutlegg, with accounts,
+                      VAT, currency and payment, and a summary per account and VAT.
   companies           List Fiken companies the token can access
   accounts            List bank accounts in Fiken (to find account codes)
   chart [range]       List the chart of accounts in Fiken (default 4000-8999)
@@ -195,15 +202,17 @@ function printLines(
     vatType: string
   }[],
   gross: number,
+  currency = "NOK",
 ) {
+  const money = (n: number) => formatMoney(n, currency)
   console.log(`\n${title}`)
   for (const l of lines) {
     console.log(
-      `  ${l.account}  ${(l.description ?? "").padEnd(24)} netto ${formatNok(l.netPrice).padStart(16)}  ` +
-        `mva ${formatNok(l.vat ?? 0).padStart(14)}  (${l.vatType})`,
+      `  ${l.account}  ${(l.description ?? "").padEnd(24)} netto ${money(l.netPrice).padStart(16)}  ` +
+        `mva ${money(l.vat ?? 0).padStart(14)}  (${l.vatType})`,
     )
   }
-  console.log(`  ${"Sum inkl. mva".padEnd(30)} ${formatNok(gross).padStart(16)}`)
+  console.log(`  ${"Sum inkl. mva".padEnd(30)} ${money(gross).padStart(16)}`)
 }
 
 function printAccrual(accrual: Config["sale"]["accrual"]) {
@@ -248,7 +257,7 @@ function printMapping(rows: MappingRow[]) {
 /** Prints checks with ✓/✗ and returns whether all passed. */
 function printChecks(checks: Check[]): boolean {
   for (const c of checks) {
-    const amounts = `${c.source ?? "beregnet"} ${formatNok(c.expected)}, ${c.reference ?? "Checkin"} ${formatNok(c.actual)}`
+    const amounts = `${c.source ?? "beregnet"} ${formatMoney(c.expected, c.currency)}, ${c.reference ?? "Checkin"} ${formatMoney(c.actual, c.currency)}`
     const text = `${c.label}: ${c.detail ?? amounts}`
     if (c.ok && c.note) {
       console.log(`  ! ${text}`)
@@ -256,7 +265,7 @@ function printChecks(checks: Check[]): boolean {
     } else if (c.ok) {
       step(text)
     } else {
-      warn(c.detail ? text : `${text} (avvik ${formatNok(c.expected - c.actual)})`)
+      warn(c.detail ? text : `${text} (avvik ${formatMoney(c.expected - c.actual, c.currency)})`)
       if (c.hint) console.log(`    ${c.hint}`)
     }
   }
@@ -780,7 +789,7 @@ async function readUtleggSource(
     if (docs.length !== 1)
       fail(
         docs.length === 0
-          ? `No unused inbox document matching "${utlegg.inboxName}". Use --inbox-doc <id> or a PDF file (see \`pnpm foring inbox\`).`
+          ? `No unused inbox document matching "${[utlegg.inboxName].flat().join('" or "')}". Use --inbox-doc <id> or a PDF file (see \`pnpm foring inbox\`).`
           : `${docs.length} utleggsrapporter in the inbox, pick one with --inbox-doc <id>:\n${list}`,
       )
     doc = docs[0]!
@@ -810,11 +819,12 @@ async function utleggClaim() {
 
   console.log(`Utleggsrapport → Fiken (${mode})`)
   console.log(`Kilde: ${source.description}`)
+  if (report.reportId) console.log(`Rapport ${report.reportId} (skjemaets format ${report.format})`)
   console.log(
     `${report.name}, ${report.email ?? "uten e-post"}, ${report.bankAccount ? `konto ${report.bankAccount}` : report.iban ? `IBAN ${report.iban}` : "uten kontonummer"}, utbetaling i ${report.payoutCurrency}`,
   )
   console.log(
-    `Laget ${report.generated ?? "?"}, ${report.rows.length} kvitteringer, total ${formatNok(report.total ?? 0)}`,
+    `Laget ${report.generated ?? "?"}, ${report.rows.length} kvitteringer, total ${formatMoney(report.total ?? 0, plan.currency)}`,
   )
 
   const label = (id?: string) =>
@@ -827,17 +837,25 @@ async function utleggClaim() {
   }
   console.log("")
   for (const p of plan.placements) {
-    const by = p.by === "moved" ? "flyttet" : p.by === "none" ? "" : `regel ${p.by.rule + 1}`
+    const by =
+      p.by === "moved"
+        ? "flyttet"
+        : p.by === "form"
+          ? "fra skjemaet"
+          : p.by === "none"
+            ? ""
+            : `regel ${p.by.rule + 1}`
     const rate = p.rate === undefined ? "mva ?" : `${p.rate} % ${p.rateBy ? rateBy[p.rateBy] : ""}`
     console.log(
-      `  #${String(p.row.n).padEnd(3)} ${p.row.date}  ${p.row.description.slice(0, 40).padEnd(40)} ${(p.row.amount === undefined ? "—" : formatNok(p.row.amount)).padStart(14)}  [${p.category ?? "?"}] ${label(p.category)}, ${rate}${by ? `, ${by}` : ""}${p.row.receiptHasText ? "" : ", bilde"}`,
+      `  #${String(p.row.n).padEnd(3)} ${p.row.date}  ${p.row.description.slice(0, 40).padEnd(40)} ${(p.row.amount === undefined ? "—" : formatMoney(p.row.amount, plan.currency)).padStart(14)}  [${p.category ?? "?"}] ${label(p.category)}, ${rate}${by ? `, ${by}` : ""}${p.row.receiptHasText ? "" : ", bilde"}`,
     )
   }
 
   printLines(
-    `\nKjøp fra ${report.name}, referanse "${plan.reference}", dato ${plan.date}, forfall ${plan.dueDate}, ikke betalt`,
+    `\nKjøp fra ${report.name}, referanse "${plan.reference}", dato ${plan.date}, forfall ${plan.dueDate}, ikke betalt${plan.currency === "NOK" ? "" : `, i ${plan.currency}`}`,
     plan.lines,
     plan.gross,
+    plan.currency,
   )
 
   console.log("\nKontroller mot rapporten")
@@ -868,7 +886,7 @@ async function utleggClaim() {
     return
   }
 
-  const what = `${state.person?.status === "new" ? `Legg inn ${report.name} som leverandør og ` : ""}${mode === "draft" ? "lag kjøpsutkast" : "bokfør kjøpet"} på ${formatNok(plan.gross)} i Fiken`
+  const what = `${state.person?.status === "new" ? `Legg inn ${report.name} som leverandør og ` : state.person?.update ? `Legg inn ${describeUpdate(state.person.update).toLowerCase()} på ${report.name} og ` : ""}${mode === "draft" ? "lag kjøpsutkast" : "bokfør kjøpet"} på ${formatMoney(plan.gross, plan.currency)} i Fiken`
   if (!(await confirm(what, checksOk))) {
     console.log("Avbrutt, ingenting er skrevet til Fiken.")
     return
@@ -877,15 +895,54 @@ async function utleggClaim() {
   const result = await bookUtlegg(client, prepared, state, mode, step)
   if (result.total) {
     const { actual, expected } = result.total
-    if (actual === expected) step(`Kjøpet i Fiken: ${formatNok(actual)}`)
+    if (actual === expected) step(`Kjøpet i Fiken: ${formatMoney(actual, plan.currency)}`)
     else
       warn(
-        `Kjøpet i Fiken er ${formatNok(actual)}, forventet ${formatNok(expected)}. Sjekk det i Fiken.`,
+        `Kjøpet i Fiken er ${formatMoney(actual, plan.currency)}, forventet ${formatMoney(expected, plan.currency)}. Sjekk det i Fiken.`,
       )
   }
   console.log(
     "\nFerdig. Økonomiansvarlig betaler kjøpet fra Fiken; betalingen kobles i bankavstemmingen.",
   )
+}
+
+async function utleggHistory() {
+  const config = await loadConfig(opts.config)
+  const client = await fiken(config)
+  const year = args[0] ? Number(args[0]) : new Date().getFullYear()
+  if (!Number.isInteger(year) || year < 2000) fail(`Invalid year "${args[0]}"`)
+  // Without a year: last year too, since the conference's utlegg straddle the turn of the year.
+  const from = `${args[0] ? year : year - 1}-01-01`
+  const to = `${year}-12-31`
+  const items = pastUtlegg(
+    await client.purchasesBetween(from, to),
+    await client.journalEntriesBetween(from, to),
+  )
+  console.log(`Utlegg i Fiken ${from} – ${to}: ${items.length}`)
+  for (const i of items) {
+    const head = [
+      i.date,
+      i.source === "purchase" ? `kjøp ${i.id}` : `kontantutlegg ${i.id}`,
+      i.who,
+      i.description,
+      i.kind,
+      i.currency && i.currency !== "NOK" ? i.currency : undefined,
+      i.paid === false ? "ikke betalt" : undefined,
+      i.paidFrom.length > 0 ? `betalt fra ${i.paidFrom.join(", ")}` : undefined,
+    ]
+      .filter(Boolean)
+      .join("  ·  ")
+    console.log(`\n${head}`)
+    for (const l of i.lines)
+      console.log(
+        `  ${l.account.padEnd(10)} ${l.vat.padEnd(8)} netto ${formatNok(l.net).padStart(14)}  mva ${formatNok(l.vatAmount).padStart(12)}  ${(l.description ?? "").slice(0, 50)}`,
+      )
+  }
+  console.log("\nPer konto og mva (kostnadslinjer, i NOK)")
+  for (const p of utleggPractice(items))
+    console.log(
+      `  ${p.account.padEnd(6)} ${p.vat.padEnd(8)} ${String(p.count).padStart(3)} stk  netto ${formatNok(p.net).padStart(14)}  mva ${formatNok(p.vatAmount).padStart(12)}`,
+    )
 }
 
 async function main() {
@@ -903,6 +960,8 @@ async function main() {
       return hotelInvoice()
     case "utlegg":
       return utleggClaim()
+    case "utlegg-history":
+      return utleggHistory()
     case "login":
       return login()
     case "logout":

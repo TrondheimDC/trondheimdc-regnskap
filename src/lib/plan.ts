@@ -91,6 +91,13 @@ export function buildPlan(report: CheckinReport, config: Config): Plan {
   }
 }
 
+/** An amount in a currency's minor unit: "1 234,56 kr" for NOK, "1 234,56 EUR" for others. */
+export function formatMoney(amount: number, currency = "NOK"): string {
+  return currency === "NOK"
+    ? formatNok(amount)
+    : `${formatNok(amount).replace(/ kr$/, "")} ${currency}`
+}
+
 export function formatNok(ore: number): string {
   return (
     (ore / 100).toLocaleString("nb-NO", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) +

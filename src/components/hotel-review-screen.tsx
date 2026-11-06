@@ -24,6 +24,7 @@ import {
   type BookRun,
   StepRow,
 } from "@/components/book-confirm-dialog"
+import { ChoicePicker } from "@/components/choice-picker"
 import { MarkBadges, MarkedAmount, MarkProvider, MarkRow, useMarksFor } from "@/components/marks"
 import { PagedPdfPreview } from "@/components/pdf-preview"
 import { Card, CheckRow, SectionLabel, StatusBadge } from "@/components/review-screen"
@@ -58,7 +59,7 @@ import {
 } from "@/lib/hotel-booking"
 import { buildHotelMarks } from "@/lib/marks"
 import { pdfPageCount, renderPdfPage } from "@/lib/pdf-render"
-import { formatNok } from "@/lib/plan"
+import { formatMoney, formatNok } from "@/lib/plan"
 import { cn } from "@/lib/utils"
 
 export type HotelSelection = { kind: "ehf"; doc: EhfDocument } | { kind: "file"; file: File }
@@ -816,9 +817,6 @@ function BillRow({
   )
 }
 
-const selectClass =
-  "h-8 max-w-[14rem] cursor-pointer truncate rounded-lg border border-white/15 bg-[var(--color-bg-base)] px-2 text-sm text-[var(--color-fg-base)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-fg-brand)]"
-
 function CategorySelect({
   hotel,
   label,
@@ -832,25 +830,20 @@ function CategorySelect({
   mixed?: boolean
   onChange: (category: string) => void
 }) {
-  const known = value !== undefined && hotel.categories.some((c) => c.id === value)
   return (
-    <select
-      aria-label={label}
-      value={known ? value : ""}
-      onChange={(e) => e.target.value && onChange(e.target.value)}
-      className={selectClass}
-    >
-      {!known ? (
-        <option value="" disabled>
-          {mixed ? "Flere kategorier" : "Velg kategori"}
-        </option>
-      ) : null}
-      {hotel.categories.map((c) => (
-        <option key={c.id} value={c.id}>
-          {c.label}
-        </option>
-      ))}
-    </select>
+    <ChoicePicker
+      label={label}
+      value={value}
+      choices={hotel.categories.map((c) => ({
+        value: c.id,
+        label: c.label,
+        hint: `Konto ${c.account}`,
+      }))}
+      placeholder={mixed ? "Flere kategorier" : "Velg kategori"}
+      invalid={!mixed && value === undefined}
+      onChange={onChange}
+      className="w-[14rem]"
+    />
   )
 }
 
@@ -969,14 +962,18 @@ export function ChecksCard({
 }
 
 /** After booking: the purchase as Fiken booked it, against the total on the PDF. */
-export function BookedTotal({ result }: { result: Pick<HotelBookResult, "total"> }) {
+export function BookedTotal({
+  result,
+}: {
+  result: { total?: { actual: number; expected: number; currency?: string } }
+}) {
   if (!result.total) return null
-  const { actual, expected } = result.total
+  const { actual, expected, currency } = result.total
   const ok = actual === expected
   return (
     <StepRow ok={ok}>
-      Kjøpet i Fiken: <span className="tabular">{formatNok(actual)}</span>
-      {ok ? "" : ` (forventet ${formatNok(expected)} – sjekk kjøpet i Fiken)`}
+      Kjøpet i Fiken: <span className="tabular">{formatMoney(actual, currency)}</span>
+      {ok ? "" : ` (forventet ${formatMoney(expected, currency)} – sjekk kjøpet i Fiken)`}
     </StepRow>
   )
 }
