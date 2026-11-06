@@ -22,7 +22,11 @@ import {
 } from "lucide-react"
 import { type ComponentProps, type ReactNode, useMemo, useState } from "react"
 import { toast } from "sonner"
-import { invalidateFikenReads } from "@/components/fiken-cache"
+import {
+  BookConfirmDialog,
+  type BookMode,
+  type ConfirmItem,
+} from "@/components/book-confirm-dialog"
 import {
   MarkedAmount,
   MarkProvider,
@@ -34,16 +38,6 @@ import {
 } from "@/components/marks"
 import { PagedPdfPreview } from "@/components/pdf-preview"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -89,8 +83,6 @@ import { cn } from "@/lib/utils"
 import { type Check, explainRounding, isRoundingCheck, type RoundingCorrection } from "@/lib/verify"
 
 export type Selection = { kind: "inbox"; doc: ReportDocument } | { kind: "file"; file: File }
-
-type BookMode = "draft" | "create"
 
 async function analyze(client: Fiken, selection: Selection) {
   const pdf =
@@ -225,8 +217,9 @@ export function ReviewScreen({
     selection.kind === "inbox"
       ? `inbox-${selection.doc.documentId}`
       : `file-${selection.file.name}-${selection.file.size}-${selection.file.lastModified}`
+  const analysisKey = ["analysis", client.companySlug, key]
   const analysis = useQuery({
-    queryKey: ["analysis", client.companySlug, key],
+    queryKey: analysisKey,
     queryFn: () => analyze(client, selection),
   })
 
@@ -249,8 +242,11 @@ export function ReviewScreen({
     onSuccess: (_, mode) =>
       toast.success(mode === "draft" ? "Utkastene ligger i Fiken" : "Bokført i Fiken"),
     onError: () => toast.error("Føringen stoppet"),
-    // Opening the bilag again should show what was booked, not the plan from before.
-    onSettled: () => invalidateFikenReads(queryClient),
+    onSettled: async () => {
+      // Opening the bilag again should show what was booked, not the plan from before.
+      await queryClient.invalidateQueries({ queryKey: analysisKey, refetchType: "none" })
+      await queryClient.invalidateQueries({ queryKey: ["inbox", client.companySlug] })
+    },
   })
 
   // A booked month that is a few øre off: the one thing that can be booked from the audit.
@@ -262,10 +258,7 @@ export function ReviewScreen({
     },
     onSuccess: () => toast.success("Øreavrunding bokført i Fiken"),
     onError: () => toast.error("Øreavrundingen ble ikke ført"),
-    onSettled: async () => {
-      await invalidateFikenReads(queryClient)
-      await analysis.refetch()
-    },
+    onSettled: () => analysis.refetch(),
   })
 
   const month =
@@ -420,52 +413,42 @@ function ConfirmDialog({
   onCancel: () => void
   onConfirm: (mode: BookMode) => void
 }) {
-  const { plan } = prepared
+  const { plan, reference } = prepared
   const newTransfers = fiken.transfers.filter((t) => !t.existing)
-  const moved = newTransfers.reduce((s, t) => s + t.amount, 0)
-  const payouts =
-    newTransfers.length === 1
-      ? `Utbetalingen på ${formatNok(moved)}`
-      : `${newTransfers.length} utbetalinger på til sammen ${formatNok(moved)}`
-  const route = `fra ${config.checkinAccount} til ${config.bankAccount}`
-  const vouchers = [
-    parts.sale && `salg på ${formatNok(plan.sale.gross)}`,
-    parts.purchase && `kjøp på ${formatNok(plan.purchase.gross)}`,
-  ].filter((v) => typeof v === "string")
-  const what = vouchers.join(" og ")
-  const capitalized = what.charAt(0).toUpperCase() + what.slice(1)
-  const transfers = parts.transfers
-    ? mode === "draft"
-      ? `${payouts} blir åpne fri posteringer ${route}. De kan slettes uten motpostering.`
-      : `${payouts} blir ført som fri posteringer ${route}.`
-    : ""
-
+  const items: ConfirmItem[] = [
+    ...(parts.sale
+      ? [{ icon: <Landmark />, label: "Salg", detail: reference, amount: plan.sale.gross }]
+      : []),
+    ...(parts.purchase
+      ? [{ icon: <ReceiptText />, label: "Kjøp", detail: reference, amount: plan.purchase.gross }]
+      : []),
+    ...(parts.transfers
+      ? [
+          {
+            icon: <ArrowRightLeft />,
+            label: newTransfers.length === 1 ? "Utbetaling" : `${newTransfers.length} utbetalinger`,
+            detail: `${config.checkinAccount} → ${config.bankAccount}`,
+            amount: newTransfers.reduce((s, t) => s + t.amount, 0),
+          },
+        ]
+      : []),
+  ]
   return (
-    <AlertDialog open={mode !== undefined} onOpenChange={(open) => !open && onCancel()}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            {mode === "draft" ? "Lag utkast i Fiken?" : "Bokfør i Fiken?"}
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            {[
-              what &&
-                `${capitalized} for ${title} blir ${mode === "draft" ? "utkast" : "bokført"} i ${companyName}, med bilaget vedlagt.`,
-              transfers,
-              mode === "create" && "Bokførte bilag kan bare rettes ved å annullere dem i Fiken.",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Avbryt</AlertDialogCancel>
-          <AlertDialogAction onClick={() => mode && onConfirm(mode)}>
-            {mode === "draft" ? "Lag utkast" : "Bokfør"}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <BookConfirmDialog
+      mode={mode}
+      title={{ draft: "Lag utkast i Fiken?", create: "Bokfør i Fiken?" }}
+      subtitle={`${title} · ${companyName}`}
+      items={items}
+      notes={[
+        fiken.doc && "Bilaget legges ved.",
+        mode === "draft" &&
+          parts.transfers &&
+          "Utbetalingene blir åpne fri posteringer, som kan slettes uten motpostering.",
+        mode === "create" && "Bokførte bilag kan bare rettes ved å annullere dem i Fiken.",
+      ]}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    />
   )
 }
 
@@ -876,29 +859,28 @@ function RoundingCard({
         Før øreavrunding
       </Button>
 
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Bokfør øreavrunding i Fiken?</AlertDialogTitle>
-            <AlertDialogDescription>
-              En fri postering på {amount} fra {r.creditAccount} til {r.debitAccount} blir bokført{" "}
-              {formatDay(r.date)} i {companyName}, med bilaget vedlagt. Bokførte bilag kan bare
-              rettes ved å annullere dem i Fiken.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Avbryt</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                setConfirming(false)
-                action.onBook()
-              }}
-            >
-              Bokfør
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <BookConfirmDialog
+        mode={confirming ? "create" : undefined}
+        title={{ draft: "", create: "Bokfør øreavrunding i Fiken?" }}
+        subtitle={`${formatDay(r.date)} · ${companyName}`}
+        items={[
+          {
+            icon: <Coins />,
+            label: "Øreavrunding",
+            detail: `Fri postering ${r.creditAccount} → ${r.debitAccount}`,
+            amount: Math.abs(r.amount),
+          },
+        ]}
+        notes={[
+          "Bilaget legges ved.",
+          "Bokførte bilag kan bare rettes ved å annullere dem i Fiken.",
+        ]}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => {
+          setConfirming(false)
+          action.onBook()
+        }}
+      />
     </Card>
   )
 }

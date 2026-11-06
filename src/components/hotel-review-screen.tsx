@@ -19,21 +19,11 @@ import {
 import { type ReactNode, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { AccountPicker } from "@/components/account-picker"
-import { invalidateFikenReads } from "@/components/fiken-cache"
-import { MarkedAmount, MarkProvider, MarkRow, useMarksFor } from "@/components/marks"
+import { BookConfirmDialog, type BookMode } from "@/components/book-confirm-dialog"
+import { MarkBadges, MarkedAmount, MarkProvider, MarkRow, useMarksFor } from "@/components/marks"
 import { PagedPdfPreview } from "@/components/pdf-preview"
 import { Card, CheckRow, SectionLabel, StatusBadge } from "@/components/review-screen"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -68,8 +58,6 @@ import { formatNok } from "@/lib/plan"
 import { cn } from "@/lib/utils"
 
 export type HotelSelection = { kind: "ehf"; doc: EhfDocument } | { kind: "file"; file: File }
-
-type BookMode = "draft" | "create"
 
 async function analyze(client: Fiken, hotel: HotelConfig, selection: HotelSelection) {
   const pdf =
@@ -115,8 +103,9 @@ export function HotelReviewScreen({
     selection.kind === "ehf"
       ? `ehf-${selection.doc.ehfDocumentId}`
       : `file-${selection.file.name}-${selection.file.size}-${selection.file.lastModified}`
+  const analysisKey = ["hotel-analysis", client.companySlug, key]
   const analysis = useQuery({
-    queryKey: ["hotel-analysis", client.companySlug, key],
+    queryKey: analysisKey,
     queryFn: () => analyze(client, hotel, selection),
   })
 
@@ -143,7 +132,10 @@ export function HotelReviewScreen({
     onSuccess: (_, mode) =>
       toast.success(mode === "draft" ? "Kjøpsutkastet ligger i Fiken" : "Bokført i Fiken"),
     onError: () => toast.error("Føringen stoppet"),
-    onSettled: () => invalidateFikenReads(queryClient),
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: analysisKey, refetchType: "none" })
+      await queryClient.invalidateQueries({ queryKey: ["hotel-invoices", client.companySlug] })
+    },
   })
 
   const invoice = source?.invoice
@@ -289,30 +281,26 @@ function ConfirmDialog({
 }) {
   const supplier = fiken.supplier?.name ?? source.invoice.supplierName ?? "hotellet"
   return (
-    <AlertDialog open={mode !== undefined} onOpenChange={(open) => !open && onCancel()}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            {mode === "draft" ? "Lag kjøpsutkast i Fiken?" : "Bokfør i Fiken?"}
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            {[
-              `Kjøp på ${formatNok(plan.gross)} fra ${supplier} blir ${mode === "draft" ? "et utkast" : "bokført"} i ${companyName}, med ${plan.lines.length} linjer og fakturaen vedlagt.`,
-              `Det står som ubetalt leverandørgjeld${plan.dueDate ? ` med forfall ${formatDay(plan.dueDate)}` : ""} til betalingen kommer på banken.`,
-              mode === "create" && "Bokførte bilag kan bare rettes ved å annullere dem i Fiken.",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Avbryt</AlertDialogCancel>
-          <AlertDialogAction onClick={() => mode && onConfirm(mode)}>
-            {mode === "draft" ? "Lag utkast" : "Bokfør"}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <BookConfirmDialog
+      mode={mode}
+      title={{ draft: "Lag kjøpsutkast i Fiken?", create: "Bokfør i Fiken?" }}
+      subtitle={`Faktura ${source.invoice.number} · ${companyName}`}
+      items={[
+        {
+          icon: <ReceiptText />,
+          label: `Kjøp fra ${supplier}`,
+          detail: `${plan.lines.length} linjer${plan.dueDate ? ` · forfall ${formatDay(plan.dueDate)}` : ""}`,
+          amount: plan.gross,
+        },
+      ]}
+      notes={[
+        "Fakturaen legges ved.",
+        "Står som ubetalt leverandørgjeld til betalingen kommer på banken.",
+        mode === "create" && "Bokførte bilag kan bare rettes ved å annullere dem i Fiken.",
+      ]}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    />
   )
 }
 
@@ -389,7 +377,6 @@ function HotelReview({
               </AlertDescription>
             </Alert>
           )}
-          <InvoiceSummary plan={plan} prepared={prepared} />
         </div>
 
         <div className="flex min-w-0 flex-col gap-6 lg:order-1">
@@ -398,6 +385,11 @@ function HotelReview({
           <div className="flex flex-col gap-3">
             <SectionLabel>Kjøpet</SectionLabel>
             <PurchaseCard plan={plan} fiken={fiken} />
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <SectionLabel>Side 1 av fakturaen</SectionLabel>
+            <InvoiceSummary plan={plan} prepared={prepared} />
           </div>
 
           <div className="flex flex-col gap-3">
@@ -532,6 +524,8 @@ function Totals({
   )
 }
 
+const ALL_RATES = [0, 12, 15, 25]
+
 const vatText = (l: HotelPlan["lines"][number]) =>
   l.rate === 0
     ? "uten mva"
@@ -619,6 +613,18 @@ function CategoryCard({
   const rooms = bills.filter((b) => b.section === "Stay")
   const other = bills.filter((b) => b.section !== "Stay")
   const unplaced = category === undefined
+  // The page-1 sums (section and rate) the category's lines are part of.
+  const marks = useMarksFor([
+    ...new Set(
+      bills.flatMap((b) =>
+        b.placements.flatMap((p) =>
+          (p.line.rate === "mixed" ? ALL_RATES : [p.line.rate]).map(
+            (rate) => `section:${p.line.section}:${rate}`,
+          ),
+        ),
+      ),
+    ),
+  ])
 
   return (
     <Card
@@ -630,11 +636,17 @@ function CategoryCard({
           : lines.map(vatText).join(" · ") || "Ingen linjer på denne fakturaen"
       }
       aside={<span className="tabular shrink-0 pt-0.5 text-lg">{formatNok(sum)}</span>}
+      marks={marks}
       className={cn(
         unplaced && "ring-1 ring-[var(--color-bg-danger)]",
         !unplaced && bills.length === 0 && "bg-[var(--color-bg-surface)]/50",
       )}
     >
+      {marks.length > 0 ? (
+        <p className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[var(--color-fg-base)]/60">
+          Fra side 1 <MarkBadges marks={marks} />
+        </p>
+      ) : null}
       {onAccount && account ? (
         <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <label htmlFor={`account-${category}`} className="text-sm text-[var(--color-fg-base)]/70">
@@ -834,23 +846,20 @@ function InvoiceSummary({ plan, prepared }: { plan: HotelPlan; prepared: HotelPr
     { key: "total", label: "Fakturatotal", amount: invoice.total },
   ]
   return (
-    <details className="group rounded-xl bg-[var(--color-bg-surface)]/60 p-4 text-sm sm:p-5">
-      <summary className="cursor-pointer font-semibold text-[var(--color-fg-base)]/80">
-        Slik er fakturaen lest
-      </summary>
-      <p className="mt-2 text-xs text-[var(--color-fg-base)]/50">
-        Summene på side 1, som linjene på de neste sidene ({invoice.lines.length} stk.) kontrolleres
-        mot. Romlinjene deles på 12 % og 25 % slik side 1 viser.
-      </p>
-      <ul className="mt-3 flex flex-col">
+    <Card
+      icon={<FileText />}
+      title="Summene på side 1"
+      subtitle={`Linjene på de neste sidene (${invoice.lines.length} stk.) kontrolleres mot disse`}
+    >
+      <ul className="mt-3 flex flex-col text-sm">
         {rows.map((r) => (
           <SummaryRow key={r.key} markKey={r.key} label={r.label} amount={r.amount} />
         ))}
       </ul>
       <p className="mt-3 text-xs text-[var(--color-fg-base)]/50">
-        Referanse i Fiken: {plan.reference}
+        Romlinjene deles på 12 % og 25 % slik side 1 viser. Referanse i Fiken: {plan.reference}
       </p>
-    </details>
+    </Card>
   )
 }
 
