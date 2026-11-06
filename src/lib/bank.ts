@@ -11,8 +11,11 @@ export interface BankReconciliation {
   bankAccountId: number
   /** Last day the bank account is reconciled through in Fiken; none if never. */
   reconciledDate?: string
-  /** Payouts booked in Fiken but after `reconciledDate`: their bank lines are likely not linked. */
-  pending: { date: string; amount: number }[]
+  /**
+   * Payouts booked in Fiken but after `reconciledDate`: their bank lines may not be linked yet.
+   * Each with the bankavstemming narrowed to its day.
+   */
+  pending: { date: string; amount: number; url: string }[]
   /** Fiken's bankavstemming, narrowed to the pending payouts' days. */
   url: string
 }

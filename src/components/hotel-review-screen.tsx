@@ -5,7 +5,6 @@ import {
   ArrowLeft,
   ChevronRight,
   CircleCheck,
-  CircleX,
   FilePen,
   FileText,
   ListChecks,
@@ -16,10 +15,15 @@ import {
   TriangleAlert,
   Undo2,
 } from "lucide-react"
-import { type ReactNode, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { toast } from "sonner"
 import { AccountPicker } from "@/components/account-picker"
-import { BookConfirmDialog, type BookMode } from "@/components/book-confirm-dialog"
+import {
+  BookConfirmDialog,
+  type BookMode,
+  type BookRun,
+  StepRow,
+} from "@/components/book-confirm-dialog"
 import { MarkBadges, MarkedAmount, MarkProvider, MarkRow, useMarksFor } from "@/components/marks"
 import { PagedPdfPreview } from "@/components/pdf-preview"
 import { Card, CheckRow, SectionLabel, StatusBadge } from "@/components/review-screen"
@@ -98,7 +102,6 @@ export function HotelReviewScreen({
   onBack: () => void
 }) {
   const hotel = hotelRecipe()
-  const queryClient = useQueryClient()
   const key =
     selection.kind === "ehf"
       ? `ehf-${selection.doc.ehfDocumentId}`
@@ -113,7 +116,9 @@ export function HotelReviewScreen({
   const [moves, setMoves] = useState<Moves>({})
   const [accounts, setAccounts] = useState<Record<string, string>>({})
   const [override, setOverride] = useState(false)
-  const [confirming, setConfirming] = useState<BookMode>()
+  const queryClient = useQueryClient()
+  // What the user confirmed, kept as it was while the screen behind the dialog updates.
+  const [confirming, setConfirming] = useState<Confirming>()
   const [progress, setProgress] = useState<string[]>([])
 
   const source = analysis.data?.source
@@ -122,27 +127,43 @@ export function HotelReviewScreen({
     [source, hotel, moves, accounts],
   )
 
-  const booking = useMutation({
-    mutationFn: (mode: BookMode) => {
-      const fiken = analysis.data?.fiken
-      if (!prepared || !fiken) throw new Error("Fakturaen er ikke lest ennå")
-      setProgress([])
-      return bookHotel(client, prepared, fiken, mode, (step) => setProgress((p) => [...p, step]))
-    },
-    onSuccess: (_, mode) =>
-      toast.success(mode === "draft" ? "Kjøpsutkastet ligger i Fiken" : "Bokført i Fiken"),
-    onError: () => toast.error("Føringen stoppet"),
-    onSettled: async () => {
+  // After writing: Fiken as it is now goes into this invoice's cache, so the screen, and opening
+  // the invoice again, shows the purchase. Only Fiken is read again, not the PDF.
+  const reread = async (source: HotelSource) => {
+    try {
+      const fiken = await inspectHotel(client, hotel, source, { attach: true })
+      queryClient.setQueryData<Analysis>(analysisKey, (old) => old && { ...old, fiken })
+    } catch {
       await queryClient.invalidateQueries({ queryKey: analysisKey, refetchType: "none" })
-      await queryClient.invalidateQueries({ queryKey: ["hotel-invoices", client.companySlug] })
+    }
+    void queryClient.invalidateQueries({
+      queryKey: ["hotel-invoices", client.companySlug],
+      refetchType: "all",
+    })
+  }
+
+  const booking = useMutation({
+    mutationFn: async ({ mode, prepared, fiken }: Confirming) => {
+      setProgress([])
+      try {
+        return await bookHotel(client, prepared, fiken, mode, (step) =>
+          setProgress((p) => [...p, step]),
+        )
+      } finally {
+        // Also after a failure: what got written is in Fiken.
+        await reread(prepared.source)
+      }
     },
   })
+  const closeBooking = () => {
+    setConfirming(undefined)
+    booking.reset()
+  }
 
   const invoice = source?.invoice
   const title = invoice ? `Faktura ${invoice.number}` : "Hotellfaktura"
   const docName =
     selection.kind === "ehf" ? (selection.doc.supplierName ?? "Hotellet") : selection.file.name
-  const bookingStarted = !booking.isIdle && booking.variables !== undefined
   const refresh = () =>
     analysis.refetch().then((r) => {
       if (r.isSuccess) toast.success("Oppdatert fra Fiken")
@@ -162,7 +183,7 @@ export function HotelReviewScreen({
             <ArrowLeft className="size-4" aria-hidden />
             Tilbake
           </Button>
-          {bookingStarted ? null : (
+          {booking.isPending ? null : (
             <Button
               variant="ghost"
               size="sm"
@@ -208,7 +229,7 @@ export function HotelReviewScreen({
         </Alert>
       ) : null}
 
-      {analysis.data && prepared && !bookingStarted ? (
+      {analysis.data && prepared ? (
         <HotelReview
           hotel={hotel}
           data={analysis.data}
@@ -229,61 +250,64 @@ export function HotelReviewScreen({
           onAccount={(category, account) => setAccounts((a) => ({ ...a, [category]: account }))}
           override={override}
           onOverride={setOverride}
-          onBook={setConfirming}
+          onBook={(mode) =>
+            analysis.data && setConfirming({ mode, prepared, fiken: analysis.data.fiken })
+          }
           disabled={booking.isPending}
         />
       ) : null}
 
-      {bookingStarted && booking.variables ? (
-        <div className="mx-auto w-full max-w-2xl">
-          <BookingStatus
-            mode={booking.variables}
-            progress={progress}
-            result={booking.data}
-            error={booking.error}
-            pending={booking.isPending}
-            onDone={onBack}
-          />
-        </div>
-      ) : null}
-
-      {analysis.data && prepared ? (
+      {confirming ? (
         <ConfirmDialog
-          prepared={prepared}
-          fiken={analysis.data.fiken}
-          mode={confirming}
+          confirming={confirming}
           companyName={companyName}
-          onCancel={() => setConfirming(undefined)}
-          onConfirm={(mode) => {
-            booking.mutate(mode)
-            setConfirming(undefined)
-          }}
+          run={
+            booking.isIdle
+              ? undefined
+              : {
+                  progress,
+                  pending: booking.isPending,
+                  error: booking.error,
+                  result: booking.data ? <BookedTotal result={booking.data} /> : null,
+                }
+          }
+          onCancel={closeBooking}
+          onConfirm={() => booking.mutate(confirming)}
         />
       ) : null}
     </main>
   )
 }
 
+interface Confirming {
+  mode: BookMode
+  prepared: HotelPrepared
+  fiken: HotelFikenState
+}
+
 function ConfirmDialog({
-  prepared: { plan, source },
-  fiken,
-  mode,
+  confirming: {
+    mode,
+    prepared: { plan, source },
+    fiken,
+  },
   companyName,
+  run,
   onCancel,
   onConfirm,
 }: {
-  prepared: HotelPrepared
-  fiken: HotelFikenState
-  mode?: BookMode
+  confirming: Confirming
   companyName: string
+  run?: BookRun
   onCancel: () => void
-  onConfirm: (mode: BookMode) => void
+  onConfirm: () => void
 }) {
   const supplier = fiken.supplier?.name ?? source.invoice.supplierName ?? "hotellet"
   return (
     <BookConfirmDialog
       mode={mode}
       title={{ draft: "Lag kjøpsutkast i Fiken?", create: "Bokfør i Fiken?" }}
+      done={{ draft: "Kjøpsutkastet ligger i Fiken", create: "Bokført i Fiken" }}
       subtitle={`Faktura ${source.invoice.number} · ${companyName}`}
       items={[
         {
@@ -298,6 +322,7 @@ function ConfirmDialog({
         "Står som ubetalt leverandørgjeld til betalingen kommer på banken.",
         mode === "create" && "Bokførte bilag kan bare rettes ved å annullere dem i Fiken.",
       ]}
+      run={run}
       onCancel={onCancel}
       onConfirm={onConfirm}
     />
@@ -935,86 +960,15 @@ function ChecksCard({ checks, blockers }: { checks: HotelPrepared["checks"]; blo
   )
 }
 
-function BookingStatus({
-  mode,
-  progress,
-  result,
-  error,
-  pending,
-  onDone,
-}: {
-  mode: BookMode
-  progress: string[]
-  result?: HotelBookResult
-  error: Error | null
-  pending: boolean
-  onDone: () => void
-}) {
-  const totalOk = result?.total ? result.total.actual === result.total.expected : undefined
+/** After booking: the purchase as Fiken booked it, against the invoice total. */
+function BookedTotal({ result }: { result: HotelBookResult }) {
+  if (!result.total) return null
+  const { actual, expected } = result.total
+  const ok = actual === expected
   return (
-    <div className="flex flex-col gap-3">
-      <SectionLabel>
-        {pending
-          ? "Fører i Fiken…"
-          : error
-            ? "Føringen stoppet"
-            : mode === "draft"
-              ? "Kjøpsutkastet ligger i Fiken"
-              : "Bokført i Fiken"}
-      </SectionLabel>
-      <section className="rounded-xl bg-[var(--color-bg-surface)] p-4 sm:p-5">
-        <ul className="space-y-3">
-          {progress.map((s) => (
-            <StatusRow key={s} ok>
-              {s}
-            </StatusRow>
-          ))}
-          {result?.total ? (
-            <StatusRow ok={totalOk === true}>
-              Kjøpet i Fiken: <span className="tabular">{formatNok(result.total.actual)}</span>
-              {!totalOk
-                ? ` (forventet ${formatNok(result.total.expected)} – sjekk kjøpet i Fiken)`
-                : ""}
-            </StatusRow>
-          ) : null}
-          {pending ? (
-            <li className="flex items-center gap-3 text-[var(--color-fg-base)]/70">
-              <Spinner className="size-5" />
-              Ikke lukk siden før føringen er ferdig
-            </li>
-          ) : null}
-        </ul>
-      </section>
-
-      {error ? (
-        <Alert variant="destructive">
-          <OctagonX aria-hidden />
-          <AlertTitle>Fiken avviste et steg</AlertTitle>
-          <AlertDescription>
-            <p className="select-text break-all font-mono text-xs">{error.message}</p>
-            <p>Det som er merket ✓ ligger i Fiken. Resten må du føre eller rydde opp i Fiken.</p>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {!pending ? (
-        <Button variant="surface" onClick={onDone} className="w-full">
-          Tilbake til innboksen
-        </Button>
-      ) : null}
-    </div>
-  )
-}
-
-function StatusRow({ ok, children }: { ok: boolean; children: ReactNode }) {
-  return (
-    <li className="flex gap-3">
-      {ok ? (
-        <CircleCheck className="mt-0.5 size-5 shrink-0 text-[var(--color-fg-brand)]" aria-hidden />
-      ) : (
-        <CircleX className="mt-0.5 size-5 shrink-0 text-[var(--color-bg-danger)]" aria-hidden />
-      )}
-      <span>{children}</span>
-    </li>
+    <StepRow ok={ok}>
+      Kjøpet i Fiken: <span className="tabular">{formatNok(actual)}</span>
+      {ok ? "" : ` (forventet ${formatNok(expected)} – sjekk kjøpet i Fiken)`}
+    </StepRow>
   )
 }

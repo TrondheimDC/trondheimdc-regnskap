@@ -704,6 +704,7 @@ export async function findBankReconciliation(
   const pending = unreconciled(payouts, reconciledDate).map(({ date, amount }) => ({
     date,
     amount,
+    url: bankReconciliationUrl(client.companySlug, account.bankAccountId, [date]),
   }))
   if (pending.length === 0) return undefined
   return {

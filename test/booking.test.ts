@@ -678,8 +678,16 @@ describe("auditBooked", () => {
     const p = await booked(fake)
     const never = await auditBooked(fake.client, config, p)
     expect(never.bank?.pending).toEqual([
-      { date: "2026-03-08", amount: 2000000 },
-      { date: "2026-03-22", amount: 3000000 },
+      {
+        date: "2026-03-08",
+        amount: 2000000,
+        url: "https://fiken.no/foretak/test-as/bank/bkbf/1?fra=2026-03-05&til=2026-03-11",
+      },
+      {
+        date: "2026-03-22",
+        amount: 3000000,
+        url: "https://fiken.no/foretak/test-as/bank/bkbf/1?fra=2026-03-19&til=2026-03-25",
+      },
     ])
     expect(never.bank?.url).toBe(
       "https://fiken.no/foretak/test-as/bank/bkbf/1?fra=2026-03-05&til=2026-03-25",

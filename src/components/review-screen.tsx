@@ -25,7 +25,9 @@ import { toast } from "sonner"
 import {
   BookConfirmDialog,
   type BookMode,
+  type BookRun,
   type ConfirmItem,
+  StepRow,
 } from "@/components/book-confirm-dialog"
 import {
   MarkedAmount,
@@ -44,7 +46,6 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import { config } from "@/lib/app-config"
-import type { BankReconciliation } from "@/lib/bank"
 import {
   type Audit,
   auditBooked,
@@ -139,7 +140,9 @@ function chosenParts(open: Parts, picked: Partial<Parts>): Parts {
   return Object.fromEntries(PARTS.map((p) => [p, open[p] && (picked[p] ?? true)])) as Parts
 }
 
-type Analysis = Awaited<ReturnType<typeof analyze>> & { fiken: FikenState }
+/** What a bilag reads to: the PDF, and either the plan against Fiken or the booked month. */
+type Read = Awaited<ReturnType<typeof analyze>>
+type Analysis = Read & { fiken: FikenState }
 type AuditAnalysis = Awaited<ReturnType<typeof analyze>> & { audit: Audit }
 
 export function SectionLabel({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
@@ -212,7 +215,6 @@ export function ReviewScreen({
   selection: Selection
   onBack: () => void
 }) {
-  const queryClient = useQueryClient()
   const key =
     selection.kind === "inbox"
       ? `inbox-${selection.doc.documentId}`
@@ -223,31 +225,54 @@ export function ReviewScreen({
     queryFn: () => analyze(client, selection),
   })
 
+  const queryClient = useQueryClient()
   const [override, setOverride] = useState(false)
   const [picked, setPicked] = useState<Partial<Parts>>({})
-  const [confirming, setConfirming] = useState<BookMode>()
+  // What the user confirmed, kept as it was: the screen behind the dialog turns into the booked
+  // month while the dialog still shows the booking.
+  const [confirming, setConfirming] = useState<Confirming>()
   const [progress, setProgress] = useState<string[]>([])
   const parts =
     analysis.data?.fiken &&
     chosenParts(bookable(analysis.data.prepared, analysis.data.fiken), picked)
-  const booking = useMutation({
-    mutationFn: (mode: BookMode) => {
-      const { prepared, fiken } = analysis.data ?? {}
-      if (!prepared || !fiken || !parts) throw new Error("Bilaget er ikke lest ennå")
-      setProgress([])
-      return book(client, config, prepared, fiken, mode, parts, (step) =>
-        setProgress((p) => [...p, step]),
-      )
-    },
-    onSuccess: (_, mode) =>
-      toast.success(mode === "draft" ? "Utkastene ligger i Fiken" : "Bokført i Fiken"),
-    onError: () => toast.error("Føringen stoppet"),
-    onSettled: async () => {
-      // Opening the bilag again should show what was booked, not the plan from before.
+
+  // After writing: Fiken as it is now goes into this bilag's cache, so the screen, and opening
+  // the bilag again, shows what was booked. Only Fiken is read again, not the PDF.
+  const reread = async (prepared: Prepared) => {
+    try {
+      const next = await inspect(client, prepared)
+      queryClient.setQueryData<Read>(analysisKey, (old) => {
+        if (!old) return old
+        const { audit: _audit, fiken: _fiken, ...rest } = old
+        return { ...rest, ...next }
+      })
+    } catch {
+      // Fiken didn't answer: read everything again when the bilag is next opened.
       await queryClient.invalidateQueries({ queryKey: analysisKey, refetchType: "none" })
-      await queryClient.invalidateQueries({ queryKey: ["inbox", client.companySlug] })
+    }
+    void queryClient.invalidateQueries({
+      queryKey: ["inbox", client.companySlug],
+      refetchType: "all",
+    })
+  }
+
+  const booking = useMutation({
+    mutationFn: async ({ mode, data, parts }: Confirming) => {
+      setProgress([])
+      try {
+        return await book(client, config, data.prepared, data.fiken, mode, parts, (step) =>
+          setProgress((p) => [...p, step]),
+        )
+      } finally {
+        // Also after a failure: what got written is in Fiken.
+        await reread(data.prepared)
+      }
     },
   })
+  const closeBooking = () => {
+    setConfirming(undefined)
+    booking.reset()
+  }
 
   // A booked month that is a few øre off: the one thing that can be booked from the audit.
   const rounding = useMutation({
@@ -258,14 +283,13 @@ export function ReviewScreen({
     },
     onSuccess: () => toast.success("Øreavrunding bokført i Fiken"),
     onError: () => toast.error("Øreavrundingen ble ikke ført"),
-    onSettled: () => analysis.refetch(),
+    onSettled: () => analysis.data && reread(analysis.data.prepared),
   })
 
   const month =
     analysis.data?.prepared.month ?? (selection.kind === "inbox" ? selection.doc.month : undefined)
   const title = month ? formatMonth(month) : "Regnskapsbilag"
   const docName = selection.kind === "inbox" ? selection.doc.name : selection.file.name
-  const bookingStarted = !booking.isIdle && booking.variables !== undefined
   // After fixing something in Fiken: read Fiken (and the bilag) again. The old numbers stay
   // on screen until the new ones are in.
   const refresh = () =>
@@ -288,7 +312,7 @@ export function ReviewScreen({
             <ArrowLeft className="size-4" aria-hidden />
             Tilbake
           </Button>
-          {bookingStarted ? null : (
+          {booking.isPending ? null : (
             <Button
               variant="ghost"
               size="sm"
@@ -341,7 +365,7 @@ export function ReviewScreen({
         </Alert>
       ) : null}
 
-      {analysis.data?.audit && !bookingStarted ? (
+      {analysis.data?.audit ? (
         <AuditReview
           data={{ ...analysis.data, audit: analysis.data.audit }}
           companyName={companyName}
@@ -353,65 +377,77 @@ export function ReviewScreen({
         />
       ) : null}
 
-      {analysis.data?.fiken && parts && !bookingStarted ? (
+      {analysis.data?.fiken && parts ? (
         <Review
           data={{ ...analysis.data, fiken: analysis.data.fiken }}
           parts={parts}
           onPart={(part, on) => setPicked((p) => ({ ...p, [part]: on }))}
           override={override}
           onOverride={setOverride}
-          onBook={setConfirming}
+          onBook={(mode) =>
+            analysis.data?.fiken &&
+            setConfirming({ mode, data: { ...analysis.data, fiken: analysis.data.fiken }, parts })
+          }
           disabled={booking.isPending}
         />
       ) : null}
 
-      {bookingStarted && booking.variables ? (
-        <div className="mx-auto w-full max-w-2xl">
-          <BookingStatus
-            mode={booking.variables}
-            progress={progress}
-            result={booking.data}
-            error={booking.error}
-            pending={booking.isPending}
-            onDone={onBack}
-          />
-        </div>
-      ) : null}
-
-      {analysis.data?.fiken && parts ? (
+      {confirming ? (
         <ConfirmDialog
-          data={{ ...analysis.data, fiken: analysis.data.fiken }}
-          parts={parts}
-          mode={confirming}
+          confirming={confirming}
           title={title}
           companyName={companyName}
-          onCancel={() => setConfirming(undefined)}
-          onConfirm={(mode) => {
-            booking.mutate(mode)
-            setConfirming(undefined)
-          }}
+          run={
+            booking.isIdle
+              ? undefined
+              : {
+                  progress,
+                  pending: booking.isPending,
+                  error: booking.error,
+                  result: booking.data ? <BookedBalance result={booking.data} /> : null,
+                  footnote:
+                    confirming.mode === "draft" &&
+                    booking.data &&
+                    (config.sale.accrual || config.purchase.accrual) ? (
+                      <p className="text-sm text-[var(--color-fg-base)]/70">
+                        Utkast kan ikke periodiseres herfra. Periodiser linjene når du bokfører
+                        utkastene i Fiken.
+                      </p>
+                    ) : null,
+                }
+          }
+          onCancel={closeBooking}
+          onConfirm={() => booking.mutate(confirming)}
         />
       ) : null}
     </main>
   )
 }
 
+interface Confirming {
+  mode: BookMode
+  data: Analysis
+  parts: Parts
+}
+
 function ConfirmDialog({
-  data: { prepared, fiken },
-  parts,
-  mode,
+  confirming: {
+    mode,
+    data: { prepared, fiken },
+    parts,
+  },
   title,
   companyName,
+  run,
   onCancel,
   onConfirm,
 }: {
-  data: Analysis
-  parts: Parts
-  mode?: BookMode
+  confirming: Confirming
   title: string
   companyName: string
+  run?: BookRun
   onCancel: () => void
-  onConfirm: (mode: BookMode) => void
+  onConfirm: () => void
 }) {
   const { plan, reference } = prepared
   const newTransfers = fiken.transfers.filter((t) => !t.existing)
@@ -437,6 +473,7 @@ function ConfirmDialog({
     <BookConfirmDialog
       mode={mode}
       title={{ draft: "Lag utkast i Fiken?", create: "Bokfør i Fiken?" }}
+      done={{ draft: "Utkastene ligger i Fiken", create: "Bokført i Fiken" }}
       subtitle={`${title} · ${companyName}`}
       items={items}
       notes={[
@@ -446,6 +483,7 @@ function ConfirmDialog({
           "Utbetalingene blir åpne fri posteringer, som kan slettes uten motpostering.",
         mode === "create" && "Bokførte bilag kan bare rettes ved å annullere dem i Fiken.",
       ]}
+      run={run}
       onCancel={onCancel}
       onConfirm={onConfirm}
     />
@@ -757,9 +795,13 @@ function AuditReview({
             Utbetalinger i Fiken
           </SectionLabel>
           {audit.transfers.map((t) => (
-            <TransferCard key={t.voucher} transfer={t} audit />
+            <TransferCard
+              key={t.voucher}
+              transfer={t}
+              audit
+              unlinked={audit.bank?.pending.find((p) => p.date === t.date && p.amount === t.amount)}
+            />
           ))}
-          {audit.bank ? <BankCard bank={audit.bank} /> : null}
         </div>
       ) : null}
 
@@ -1118,7 +1160,16 @@ function LineRow({
  * A payout as a fri postering from the Checkin account to the bank. Same look as the sale and
  * purchase: one in Fiken is a full card with a badge, one missing from a booked month is muted.
  */
-function TransferCard({ transfer: t, audit = false }: { transfer: Transfer; audit?: boolean }) {
+function TransferCard({
+  transfer: t,
+  audit = false,
+  unlinked,
+}: {
+  transfer: Transfer
+  audit?: boolean
+  /** Booked after the day the bank account is reconciled to: link it in Fiken. */
+  unlinked?: { url: string }
+}) {
   const marks = useMarksFor([payoutKey(t.voucher)])
   return (
     <Card
@@ -1151,6 +1202,20 @@ function TransferCard({ transfer: t, audit = false }: { transfer: Transfer; audi
               I Fiken: «{t.existing.description}»
             </p>
           ) : null}
+          {unlinked ? (
+            // Fiken's API can't see which bank lines are linked, only how far the account is
+            // reconciled; so this is a pointer, not a check.
+            <a
+              href={unlinked.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-sm text-[var(--color-fg-brand)] underline-offset-4 hover:underline"
+            >
+              <Link2 className="size-4" aria-hidden />
+              Koble mot banklinjen i Fiken
+              <ExternalLink className="size-3.5" aria-hidden />
+            </a>
+          ) : null}
         </div>
       ) : audit ? (
         <Badge variant="destructive" className="mt-3">
@@ -1160,40 +1225,6 @@ function TransferCard({ transfer: t, audit = false }: { transfer: Transfer; audi
       ) : (
         <p className="mt-3 text-xs text-[var(--color-fg-base)]/50">«{t.description}»</p>
       )}
-    </Card>
-  )
-}
-
-/** Fiken's API can't link bank lines, so the user does it in Fiken; this says which and where. */
-function BankCard({ bank }: { bank: BankReconciliation }) {
-  return (
-    <Card
-      icon={<Link2 />}
-      title="Bankavstemming"
-      subtitle={
-        bank.reconciledDate
-          ? `${bank.accountCode} er avstemt til ${formatDay(bank.reconciledDate)}`
-          : `${bank.accountCode} er ikke avstemt ennå`
-      }
-    >
-      <p className="mt-3 text-sm text-[var(--color-fg-base)]/70">
-        Koble {bank.pending.length === 1 ? "utbetalingen" : "utbetalingene"} mot banklinjene i
-        Fiken:
-      </p>
-      <ul className="mt-2 divide-y divide-white/10 text-sm">
-        {bank.pending.map((p) => (
-          <li key={p.date} className="flex items-baseline justify-between gap-3 py-1.5">
-            <span>{formatDay(p.date)}</span>
-            <span className="tabular">{formatNok(p.amount)}</span>
-          </li>
-        ))}
-      </ul>
-      <Button asChild variant="outline" className="mt-3 w-full">
-        <a href={bank.url} target="_blank" rel="noopener noreferrer">
-          Åpne bankavstemmingen i Fiken
-          <ExternalLink className="size-4" aria-hidden />
-        </a>
-      </Button>
     </Card>
   )
 }
@@ -1386,102 +1417,15 @@ function MappingDetails({ prepared }: { prepared: Prepared }) {
   )
 }
 
-function BookingStatus({
-  mode,
-  progress,
-  result,
-  error,
-  pending,
-  onDone,
-}: {
-  mode: BookMode
-  progress: string[]
-  result?: BookResult
-  error: Error | null
-  pending: boolean
-  onDone: () => void
-}) {
-  const balanceOk = result?.balance ? result.balance.actual === result.balance.expected : undefined
+/** After booking: the Checkin account's balance in Fiken against what it should be. */
+function BookedBalance({ result }: { result: BookResult }) {
+  if (!result.balance) return null
+  const { actual, expected } = result.balance
+  const ok = actual === expected
   return (
-    <div className="flex flex-col gap-3">
-      <SectionLabel>
-        {pending
-          ? "Fører i Fiken…"
-          : error
-            ? "Føringen stoppet"
-            : mode === "draft"
-              ? "Utkastene ligger i Fiken"
-              : "Bokført i Fiken"}
-      </SectionLabel>
-      <section className="rounded-xl bg-[var(--color-bg-surface)] p-4 sm:p-5">
-        <ul className="space-y-3">
-          {progress.map((s) => (
-            <li key={s} className="flex gap-3">
-              <CircleCheck
-                className="mt-0.5 size-5 shrink-0 text-[var(--color-fg-brand)]"
-                aria-hidden
-              />
-              {s}
-            </li>
-          ))}
-          {result?.balance ? (
-            <li className="flex gap-3">
-              {balanceOk ? (
-                <CircleCheck
-                  className="mt-0.5 size-5 shrink-0 text-[var(--color-fg-brand)]"
-                  aria-hidden
-                />
-              ) : (
-                <CircleX
-                  className="mt-0.5 size-5 shrink-0 text-[var(--color-bg-danger)]"
-                  aria-hidden
-                />
-              )}
-              <span>
-                Saldo {config.checkinAccount}:{" "}
-                <span className="tabular">{formatNok(result.balance.actual)}</span>
-                {!balanceOk
-                  ? ` (forventet ${formatNok(result.balance.expected)} – sjekk føringene i Fiken)`
-                  : ""}
-              </span>
-            </li>
-          ) : null}
-          {pending ? (
-            <li className="flex items-center gap-3 text-[var(--color-fg-base)]/70">
-              <Spinner className="size-5" />
-              Ikke lukk siden før føringen er ferdig
-            </li>
-          ) : null}
-        </ul>
-      </section>
-
-      {error ? (
-        <Alert variant="destructive">
-          <OctagonX aria-hidden />
-          <AlertTitle>Fiken avviste et steg</AlertTitle>
-          <AlertDescription>
-            <p className="select-text break-all font-mono text-xs">{error.message}</p>
-            <p>Det som er merket ✓ ligger i Fiken. Resten må du føre eller rydde opp i Fiken.</p>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {result?.bank ? <BankCard bank={result.bank} /> : null}
-
-      {mode === "draft" && result && (config.sale.accrual || config.purchase.accrual) ? (
-        <Alert>
-          <AlertDescription>
-            Utkast kan ikke periodiseres herfra. Periodiser linjene når du bokfører utkastene i
-            Fiken.
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {!pending ? (
-        <Button variant="surface" onClick={onDone} className="w-full">
-          Tilbake til innboksen
-        </Button>
-      ) : null}
-    </div>
+    <StepRow ok={ok}>
+      Saldo {config.checkinAccount}: <span className="tabular">{formatNok(actual)}</span>
+      {ok ? "" : ` (forventet ${formatNok(expected)} – sjekk føringene i Fiken)`}
+    </StepRow>
   )
 }
