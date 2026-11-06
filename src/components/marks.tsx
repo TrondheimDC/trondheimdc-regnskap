@@ -95,9 +95,12 @@ const HoverScope = createContext<number[]>([])
  * doesn't light up every row in it. Wrap the children in `MarkScope` with `scope`.
  */
 export function useMarkArea(marks: Mark[], kind: "card" | "row" = "card") {
-  const { active, setActive } = useMarks()
+  const state = useContext(MarkContext)
   const outer = useContext(HoverScope)
   const ns = marks.map((m) => m.n)
+  // Outside a review (e.g. the booking result) there is no PDF to highlight.
+  if (!state) return { on: false, props: {}, scope: outer }
+  const { active, setActive } = state
   return {
     on:
       kind === "card"
