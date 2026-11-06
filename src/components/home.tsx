@@ -949,7 +949,7 @@ function DocList<T>({
   }
 
   return (
-    <ul className="attendee-reveal grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <ul className="attendee-reveal grid auto-rows-fr grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {shown.map((d) => (
         <li key={keyOf(d)} className="flex min-w-0">
           {card(d)}
@@ -1014,7 +1014,7 @@ function UtleggCard({ doc, onPick }: { doc: InboxDocument; onPick: () => void })
           <Badge>Ikke ført</Badge>
         )}
       </span>
-      <span className="flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-sm font-normal">
+      <span className="mt-auto flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-sm font-normal">
         <span className="opacity-60">Mottatt {formatDay(doc.createdAt)}</span>
         <ChevronRight className="size-5 shrink-0 opacity-60" aria-hidden />
       </span>
@@ -1058,7 +1058,7 @@ function HotelCard({ doc, onPick }: { doc: EhfDocument; onPick: () => void }) {
           </Badge>
         )}
       </span>
-      <span className="flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-sm font-normal">
+      <span className="mt-auto flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-sm font-normal">
         <span className="opacity-60">
           {doc.issueDate ? `Fakturadato ${formatDay(doc.issueDate)}` : "EHF"}
         </span>
@@ -1108,7 +1108,7 @@ function ReportCard({ doc, onPick }: { doc: ReportDocument; onPick: () => void }
           <Badge>Ikke ført</Badge>
         )}
       </span>
-      <span className="flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-sm font-normal">
+      <span className="mt-auto flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-sm font-normal">
         <span className="opacity-60">Mottatt {formatDay(doc.createdAt)}</span>
         <span className="flex items-center gap-1 opacity-60">
           {doc.used ? "Kontroller" : null}
