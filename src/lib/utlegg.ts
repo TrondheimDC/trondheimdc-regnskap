@@ -519,10 +519,19 @@ export function classifyUtlegg(
   return report.rows.map((row): UtleggPlacement => {
     const key = `#${row.n}`
     const moved = choices.moves?.[key]
-    // The person's own choice in the form wins over guessing from the description.
-    const form = row.formCategory
+    // Format 2: the person chose the category in the form, and that is all we use. A missing or
+    // unknown category stops the booking; we don't guess it from the description. Format 1 has no
+    // category, so there the recipe's rules are the only way in.
+    const form =
+      report.format === 2 &&
+      row.formCategory &&
+      utlegg.categories.some((c) => c.id === row.formCategory)
+        ? row.formCategory
+        : undefined
     const rule =
-      moved || form ? -1 : utlegg.rules.findIndex((r) => matches(r.text, row.description))
+      moved || report.format === 2
+        ? -1
+        : utlegg.rules.findIndex((r) => matches(r.text, row.description))
     const category = moved ?? form ?? utlegg.rules[rule]?.category
     const by = moved ? "moved" : form ? "form" : rule >= 0 ? { rule } : "none"
     const defaults = utlegg.categories.find((c) => c.id === category)

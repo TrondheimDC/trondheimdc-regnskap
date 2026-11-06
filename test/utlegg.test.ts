@@ -803,6 +803,21 @@ describe("format 2", () => {
     expect(check(checks, "Alle kvitteringene er lagt ved")?.ok).toBe(true)
   })
 
+  test("the form's category is the only one: a receipt without it is not guessed from its text", async () => {
+    const report = await v2({
+      receipts: [
+        { description: "Taxi til flyplassen", date: "01.10.2030", category: "", payout: 1000 },
+        { description: "Teip", date: "02.10.2030", category: "Ukjent", payout: 2000 },
+        { description: "Teip til scenen", date: "03.10.2030", category: "Materiell", payout: 3000 },
+      ],
+    })
+    const plan = buildUtleggPlan(report, recipe)
+    expect(plan.placements.map((p) => p.category)).toEqual([undefined, undefined, "materiell"])
+    expect(plan.unplaced.map((u) => u.row.n)).toEqual([1, 2])
+    const { checks } = prepareUtlegg({ report, description: "test" }, recipe)
+    expect(check(checks, "Alle kvitteringene har kategori og mva-sats")?.ok).toBe(false)
+  })
+
   test("a lost row or a missing receipt page fails", async () => {
     const lost = prepareUtlegg({ report: await v2({ count: 3 }), description: "test" }, recipe)
     expect(check(lost.checks, "Antall kvitteringer mot rapporten")?.ok).toBe(false)
