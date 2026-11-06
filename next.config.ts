@@ -9,6 +9,10 @@ const isDev = process.env.NODE_ENV === "development"
 if (!isDev && !process.env.NEXT_PUBLIC_FIKEN_CLIENT_ID)
   throw new Error("NEXT_PUBLIC_FIKEN_CLIENT_ID mangler: sett den i .env.local eller i CI")
 
+// Mock mode swaps Fiken for an in-memory fake; it must never end up in a deployed build.
+if (!isDev && process.env.NEXT_PUBLIC_FIKEN_MOCK)
+  throw new Error("NEXT_PUBLIC_FIKEN_MOCK er bare for next dev (pnpm dev:mock)")
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   allowedDevOrigins: process.env.ALLOWED_DEV_ORIGINS?.split(",")
@@ -28,6 +32,9 @@ const nextConfig: NextConfig = {
       }
     : { output: "export" }),
   images: { unoptimized: true },
+  turbopack: {
+    resolveAlias: { "@/mocks/start": { browser: "./src/mocks/browser.ts" } },
+  },
 }
 
 export default nextConfig

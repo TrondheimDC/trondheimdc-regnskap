@@ -22,6 +22,10 @@ class Page {
   }
 }
 
+// Latin-1, one byte per character; no Buffer, so the mock mode can build these in the browser.
+const byteLength = (s: string) => s.length
+const latin1 = (s: string) => Uint8Array.from(s, (c) => c.charCodeAt(0) & 0xff)
+
 function render(pages: Page[]): Uint8Array {
   const esc = (s: string) => s.replace(/[\\()]/g, "\\$&")
   const streams = pages.map((p) =>
@@ -41,20 +45,20 @@ function render(pages: Page[]): Uint8Array {
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
     ...streams.flatMap((content, i) => [
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents ${pageIds[i]! + 1} 0 R >>`,
-      `<< /Length ${Buffer.byteLength(content, "latin1")} >>\nstream\n${content}\nendstream`,
+      `<< /Length ${byteLength(content)} >>\nstream\n${content}\nendstream`,
     ]),
   ]
   let pdf = "%PDF-1.4\n"
   const offsets: number[] = []
   objects.forEach((obj, i) => {
-    offsets.push(Buffer.byteLength(pdf, "latin1"))
+    offsets.push(byteLength(pdf))
     pdf += `${i + 1} 0 obj\n${obj}\nendobj\n`
   })
-  const xref = Buffer.byteLength(pdf, "latin1")
+  const xref = byteLength(pdf)
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
   pdf += offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
-  return new Uint8Array(Buffer.from(pdf, "latin1"))
+  return latin1(pdf)
 }
 
 export interface ReportData {

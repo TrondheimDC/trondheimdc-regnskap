@@ -11,6 +11,8 @@ import type { Auth } from "@/lib/fiken.ts"
 // NEXT_PUBLIC_FIKEN_OAUTH_URL is only meant for end-to-end tests against a local mock.
 const OAUTH_URL = process.env.NEXT_PUBLIC_FIKEN_OAUTH_URL || "https://fiken.no/oauth"
 const EXPIRY_MARGIN_MS = 60_000
+// Mock mode (pnpm dev:mock): no Fiken login, any token works against the in-memory fake.
+const MOCK = process.env.NEXT_PUBLIC_FIKEN_MOCK === "1"
 
 const TOKEN_KEY = "fiken.token"
 const PENDING_KEY = "fiken.pending-login"
@@ -51,6 +53,13 @@ function storeToken(response: oauth.TokenEndpointResponse): StoredToken {
 
 /** Sends the browser to Fiken's login. */
 export async function startLogin(): Promise<void> {
+  if (MOCK) {
+    const day = 24 * 60 * 60 * 1000
+    const token = { accessToken: "mock", refreshToken: "mock", expiresAt: Date.now() + day }
+    sessionStorage.setItem(TOKEN_KEY, JSON.stringify(token))
+    window.location.reload()
+    return
+  }
   const verifier = oauth.generateRandomCodeVerifier()
   const state = oauth.generateRandomState()
   // Come back to the bilag that was open, not just the front page.

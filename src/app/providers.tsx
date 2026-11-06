@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { AppLoading } from "@/components/app-loading"
 import { Toaster } from "@/components/ui/sonner"
+import { MOCK } from "@/lib/app-config"
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -24,7 +25,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
   )
   // The session lives in sessionStorage, so the real first screen is only known after mount.
   const [booted, setBooted] = useState(false)
-  useEffect(() => setBooted(true), [])
+  useEffect(() => {
+    // Mock mode: the fake Fiken must answer before the first request.
+    const ready = MOCK ? import("@/mocks/start").then((m) => m.startMock()) : Promise.resolve()
+    void ready.then(() => setBooted(true))
+  }, [])
 
   return (
     <QueryClientProvider client={queryClient}>
