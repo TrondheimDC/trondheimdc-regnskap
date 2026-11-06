@@ -551,3 +551,168 @@ export const HOTEL_INVOICE = hotelInvoicePdf({
     ],
   ],
 })
+
+// ---------------------------------------------------------------------------------------------
+// Utleggsrapport, laid out like the PDF the utlegg form (trondheimdc-utlegg) makes: Rapportinfo,
+// the table of receipts with wrapped descriptions, the total, then one page per receipt. Positions
+// are the ones pdf-lib draws there.
+
+export interface UtleggReceipt {
+  description: string
+  /** dd.mm.yyyy */
+  date: string
+  /** In the payout currency, øre; undefined prints "—" (no exchange rate). */
+  amount?: number
+  /** Receipt in another currency: amount in øre, currency, rate line. */
+  original?: { amount: number; currency: string; rate: string }
+  /** The receipt's own text lines; none for a photo. */
+  text?: string[]
+}
+
+export interface UtleggData {
+  name: string
+  email: string
+  /** "1234 56 78903", or an IBAN with `iban`. */
+  account: string
+  iban?: boolean
+  payoutCurrency?: string
+  /** dd.mm.yyyy */
+  generated: string
+  validationSkipped?: boolean
+  receipts: UtleggReceipt[]
+  /** Override the printed total, øre. */
+  total?: number
+}
+
+const nok = (ore: number) =>
+  (ore / 100).toLocaleString("nb-NO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const LONG_MONTHS = [
+  "januar",
+  "februar",
+  "mars",
+  "april",
+  "mai",
+  "juni",
+  "juli",
+  "august",
+  "september",
+  "oktober",
+  "november",
+  "desember",
+]
+
+/** Splits text into lines of at most `width` characters, at spaces. */
+function wrap(text: string, width: number): string[] {
+  const lines: string[] = []
+  let line = ""
+  for (const word of text.split(" ")) {
+    if (line && `${line} ${word}`.length > width) {
+      lines.push(line)
+      line = word
+    } else line = line ? `${line} ${word}` : word
+  }
+  return line ? [...lines, line] : lines
+}
+
+export function utleggPdf(data: UtleggData): Uint8Array {
+  const currency = data.payoutCurrency ?? "NOK"
+  const cover = new Page()
+  const at = (
+    page: Page,
+    y: number,
+    s: string,
+    x: number,
+    opts: { right?: boolean; size?: number } = {},
+  ) => {
+    page.y = y
+    page.text(s, x, opts)
+  }
+  at(cover, 806, "Utleggsrapport", 50, { size: 24 })
+  at(cover, 783, "TrondheimDC", 50, { size: 11 })
+  at(cover, 724, "Rapportinfo", 50, { size: 10 })
+  let y = 702
+  if (data.validationSkipped) {
+    at(cover, y, "ADVARSEL: Kontonummer validering ble hoppet over!", 50, { size: 12 })
+    at(cover, y - 20, "Vennligst sjekk at kontonummeret er korrekt.", 50, { size: 10 })
+    y -= 40
+  }
+  const info: [string, string][] = [
+    ["Navn:", data.name],
+    ["Adresse:", "Testveien 1, 7010 Trondheim, Norway"],
+    ["E-post:", data.email],
+    ["", "Bankinformasjon"],
+    [data.iban ? "IBAN:" : "Kontonummer:", data.account],
+    ["Utbetalingsvaluta:", currency],
+  ]
+  for (const [label, value] of info) {
+    if (label) at(cover, y, label, 50, { size: 12 })
+    at(cover, y, value, label ? 169 : 50, { size: label ? 12 : 10 })
+    y -= 24
+  }
+
+  y -= 50
+  for (const [s, x] of [
+    ["#", 50],
+    ["Beskrivelse", 75],
+    ["Dato", 238],
+    ["Valutakurs", 308],
+    [`Beløp (${currency})`, 417],
+  ] as const)
+    at(cover, y, s, x, { size: 11 })
+  at(cover, y - 12, "Norges Bank", 308, { size: 8 })
+  y -= 40
+  for (const [i, r] of data.receipts.entries()) {
+    const description = wrap(r.description, 36)
+    const exchange = r.original
+      ? [`${nok(r.original.amount)} ${r.original.currency}`, r.original.rate, `Kursdato: ${r.date}`]
+      : ["-"]
+    at(cover, y, String(i + 1), 50, { size: 10 })
+    at(cover, y, r.date, 238, { size: 10 })
+    at(cover, y, r.amount === undefined ? "—" : nok(r.amount), 545, { right: true, size: 10 })
+    for (const [j, line] of description.entries()) at(cover, y - j * 12, line, 75, { size: 10 })
+    for (const [j, line] of exchange.entries()) at(cover, y - j * 12, line, 308, { size: 10 })
+    y -= 16 + Math.max(description.length, exchange.length) * 12
+  }
+  const total = data.total ?? data.receipts.reduce((s, r) => s + (r.amount ?? 0), 0)
+  at(cover, y - 21, `Total: ${nok(total)} ${currency}`, 545, { right: true, size: 12 })
+  at(cover, 36, `Generert: ${data.generated}`, 50, { size: 9 })
+  at(cover, 36, "TrondheimDC · Utleggsrapport", 546, { right: true, size: 9 })
+
+  const receipts = data.receipts.map((r, i) => {
+    const page = new Page()
+    const [d, m, yyyy] = r.date.split(".")
+    const header = wrap(
+      `Bilag for utlegg #${i + 1}: ${r.description} (${Number(d)}. ${LONG_MONTHS[Number(m) - 1]} ${yyyy})`,
+      40,
+    )
+    for (const [j, line] of header.entries()) at(page, 826 - j * 14, line, 50, { size: 12 })
+    for (const [j, line] of (r.text ?? []).entries())
+      at(page, 700 - j * 16, line, 120, { size: 10 })
+    return page
+  })
+  return render([cover, ...receipts])
+}
+
+/** Three receipts: crew pizza (receipt says 15 %), tape (25 %), and a photo of a taxi receipt. */
+export const UTLEGG_REPORT = utleggPdf({
+  name: "Kari Testesen",
+  email: "kari@example.com",
+  account: "1234 56 78903",
+  generated: "06.11.2030",
+  receipts: [
+    {
+      description: "Pizza til crew under rigging fredag kveld, 12 stk store pizza fra Peppes",
+      date: "08.10.2030",
+      amount: 245050,
+      text: ["Peppes Pizza", "Sum 2 450,50", "MVA 15% 319,63"],
+    },
+    {
+      description: "Teip og kabelstrips",
+      date: "09.10.2030",
+      amount: 38900,
+      text: ["Clas Ohlson", "Totalt 389,00", "Herav mva 25% 77,80"],
+    },
+    { description: "Taxi Værnes", date: "10.10.2030", amount: 51200 },
+  ],
+})

@@ -5,6 +5,8 @@
 import { HttpResponse, http } from "msw"
 import { API_BASE, config } from "@/lib/app-config"
 import type {
+  Contact,
+  ContactRequest,
   DraftRequest,
   GeneralJournalEntryRequest,
   OrderLine,
@@ -12,7 +14,7 @@ import type {
   SaleRequest,
 } from "@/lib/fiken"
 import { FIKEN_API_URL } from "@/lib/fiken"
-import { HOTEL_INVOICE, MARCH_2026 } from "../../test/pdf-fixture"
+import { HOTEL_INVOICE, MARCH_2026, UTLEGG_REPORT } from "../../test/pdf-fixture"
 
 const SLUG = config.companySlug ?? "trondheimdc"
 const CHECKIN = config.checkinAccount
@@ -61,6 +63,15 @@ function createState() {
         createdAt: "2026-04-02T08:00:00Z",
         documentUrl: `${FIKEN_API_URL}/companies/${SLUG}/inbox/7001/file`,
       },
+      {
+        documentId: 7002,
+        name: "Utlegg 2030-11-06 - Kari Testesen",
+        filename: "2030-11-06-kari-testesen-expense-report.pdf",
+        description: "Mock: generert utleggsrapport",
+        status: false,
+        createdAt: "2030-11-06T10:00:00Z",
+        documentUrl: `${FIKEN_API_URL}/companies/${SLUG}/inbox/7002/file`,
+      },
     ],
     ehf: [
       {
@@ -82,6 +93,16 @@ function createState() {
     ],
     contacts: [
       {
+        contactId: 503,
+        name: "Kari Testesen",
+        email: "kari@example.com",
+        customer: false,
+        supplier: true,
+        supplierAccountCode: "2400:20003",
+        bankAccountNumber: "12345678903",
+        inactive: false,
+      },
+      {
         contactId: 501,
         name: "Checkin AS",
         organizationNumber: CHECKIN_ORG,
@@ -100,7 +121,7 @@ function createState() {
         supplierAccountCode: "2400:20077",
         inactive: false,
       },
-    ],
+    ] as Contact[],
     bankAccounts: [
       {
         bankAccountId: 11495641085,
@@ -208,10 +229,27 @@ export const handlers = [
       state.contacts.filter(
         (c) =>
           (!q.get("organizationNumber") || c.organizationNumber === q.get("organizationNumber")) &&
+          (!q.get("email") || c.email === q.get("email")) &&
+          (!q.get("name") || c.name.toLowerCase().includes(String(q.get("name")).toLowerCase())) &&
           (q.get("customer") !== "true" || c.customer) &&
           (q.get("supplier") !== "true" || c.supplier),
       ),
     )
+  }),
+  http.post(`${C}/contacts`, async ({ request }) => {
+    const body = (await request.json()) as ContactRequest
+    const contactId = state.id()
+    state.contacts.push({
+      contactId,
+      name: body.name,
+      email: body.email,
+      customer: false,
+      supplier: body.supplier,
+      supplierAccountCode: `2400:${20000 + (contactId % 10000)}`,
+      bankAccountNumber: body.bankAccountNumber,
+      inactive: false,
+    })
+    return created("/contacts", contactId)
   }),
   http.get(`${C}/contacts/:id`, ({ params }) => {
     const contact = state.contacts.find((c) => c.contactId === Number(params.id))
@@ -230,7 +268,9 @@ export const handlers = [
       ),
     )
   }),
-  http.get(`${C}/inbox/:id/file`, () => pdf(MARCH_2026)),
+  http.get(`${C}/inbox/:id/file`, ({ params }) =>
+    pdf(Number(params.id) === 7002 ? UTLEGG_REPORT : MARCH_2026),
+  ),
   http.get(`${C}/ehf`, () => HttpResponse.json(state.ehf)),
   http.get(`${C}/ehf/:id/file`, () => pdf(HOTEL_INVOICE)),
 
@@ -270,7 +310,12 @@ export const handlers = [
   }),
 
   http.get(`${C}/purchases`, ({ request }) =>
-    HttpResponse.json(state.purchases.filter((p) => inRange(p.date, query(request)))),
+    HttpResponse.json(
+      state.purchases.filter((p) => {
+        const q = query(request)
+        return q.get("contactId") ? p.supplierId === Number(q.get("contactId")) : inRange(p.date, q)
+      }),
+    ),
   ),
   http.get(`${C}/purchases/drafts`, () => HttpResponse.json(state.purchaseDrafts)),
   http.get(`${C}/purchases/:id`, ({ params }) => {
@@ -286,6 +331,7 @@ export const handlers = [
       purchaseId,
       identifier: body.identifier,
       date: body.date,
+      supplierId: body.supplierId,
       lines,
       paymentAccount: body.paid ? body.paymentAccount : null,
       payments:

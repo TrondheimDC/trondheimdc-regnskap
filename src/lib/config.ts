@@ -125,6 +125,56 @@ const HotelConfig = z
   })
 export type HotelConfig = z.infer<typeof HotelConfig>
 
+/** A kind of utlegg (expense claim); every receipt in it becomes one line on the person's purchase. */
+const UtleggCategory = z.object({
+  id: CategoryId,
+  /** Shown in the review, e.g. "Reise og transport". */
+  label: z.string().min(1).max(150),
+  /** Our expense account. Can be changed per claim in the review. */
+  account: AccountCode,
+  /**
+   * The VAT rate to assume when the receipt doesn't say (photos have no text). Receipts in a foreign
+   * currency default to 0 (no Norwegian VAT). Leave out to make the user pick a rate per receipt.
+   */
+  rate: VatRate.optional(),
+  /** Deduct the input VAT: true, false, or the rates to deduct. Without deduction the gross is booked without VAT. */
+  deduct: z.union([z.boolean(), z.array(VatRate)]),
+})
+
+/** Proposes a category for a receipt from its description. The first rule that matches wins. */
+const UtleggRule = z.object({
+  category: CategoryId,
+  /** Pattern for the description the person wrote, e.g. "taxi|fly|tog". */
+  text: Pattern,
+})
+
+/**
+ * Utleggsrapporter from the utlegg form (one PDF per claim): one supplier purchase per claim, with
+ * the person as supplier (2400:XXXXX) and a line per receipt. The økonomiansvarlig pays it from Fiken.
+ */
+const UtleggConfig = z
+  .object({
+    /** Substring of the inbox document's name or filename, e.g. "expense-report". */
+    inboxName: z.string().min(1),
+    /** Due date: this many days after the report was made. */
+    dueDays: z.int().min(0).max(90).default(14),
+    categories: z.array(UtleggCategory).min(1),
+    rules: z.array(UtleggRule),
+  })
+  .superRefine((utlegg, ctx) => {
+    const ids = new Set<string>()
+    for (const c of utlegg.categories) {
+      if (ids.has(c.id))
+        ctx.addIssue({ code: "custom", message: `Category ${c.id} is defined twice` })
+      ids.add(c.id)
+    }
+    for (const r of utlegg.rules) {
+      if (!ids.has(r.category))
+        ctx.addIssue({ code: "custom", message: `Rule names unknown category ${r.category}` })
+    }
+  })
+export type UtleggConfig = z.infer<typeof UtleggConfig>
+
 const Side = z.object({
   /** Our Fiken account for all lines, e.g. 3000 for the sale and 4300 for the purchase. */
   account: AccountCode,
@@ -184,6 +234,8 @@ export const Config = z
     }),
     /** The hotel's conference invoice. Optional. */
     hotel: HotelConfig.optional(),
+    /** Utleggsrapporter (expense claims) from the utlegg form. Optional. */
+    utlegg: UtleggConfig.optional(),
   })
   .superRefine((config, ctx) => {
     const seen = new Set<string>(config.ignore)

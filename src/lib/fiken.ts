@@ -200,8 +200,20 @@ export const Contact = z.object({
   customerAccountCode: z.string().nullish(),
   supplierAccountCode: z.string().nullish(),
   inactive: z.boolean().optional(),
+  email: z.string().nullish(),
+  /** Norwegian account number (11 digits) the contact is paid to. */
+  bankAccountNumber: z.string().nullish(),
 })
 export type Contact = z.infer<typeof Contact>
+
+/** A new contact; we only create people we pay (utlegg), as suppliers. */
+export interface ContactRequest {
+  name: string
+  email?: string
+  supplier: boolean
+  /** Norwegian account number, 11 digits, no spaces. */
+  bankAccountNumber?: string
+}
 
 const Company = z.object({
   name: z.string(),
@@ -356,8 +368,20 @@ export class Fiken {
     return id
   }
 
-  contacts(query: { organizationNumber?: string; customer?: boolean; supplier?: boolean } = {}) {
+  contacts(
+    query: {
+      organizationNumber?: string
+      email?: string
+      name?: string
+      customer?: boolean
+      supplier?: boolean
+    } = {},
+  ) {
     return this.get(z.array(Contact), this.company("/contacts"), { pageSize: 100, ...query })
+  }
+
+  createContact(contact: ContactRequest) {
+    return this.create(this.company("/contacts"), contact)
   }
 
   getContact(id: number) {
@@ -429,6 +453,11 @@ export class Fiken {
 
   purchasesOn(date: string) {
     return this.get(z.array(PurchaseResult), this.company("/purchases"), { date, pageSize: 100 })
+  }
+
+  /** Every purchase from one supplier. */
+  purchasesFrom(contactId: number) {
+    return this.getAll(PurchaseResult, this.company("/purchases"), { contactId })
   }
 
   /** All purchases dated within [from, to]. */

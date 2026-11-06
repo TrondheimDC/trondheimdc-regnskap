@@ -11,6 +11,7 @@ import {
   Inbox,
   LogIn,
   LogOut,
+  ReceiptText,
   RefreshCw,
   Upload,
 } from "lucide-react"
@@ -26,19 +27,23 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { UtleggReviewScreen, type UtleggSelection } from "@/components/utlegg-review-screen"
 import { API_BASE, config } from "@/lib/app-config"
 import { listReportDocuments, pickCompany, type ReportDocument } from "@/lib/booking"
 import { pdfPages } from "@/lib/checkin"
-import { type Company, type EhfDocument, Fiken } from "@/lib/fiken"
+import { type Company, type EhfDocument, Fiken, type InboxDocument } from "@/lib/fiken"
 import { browserAuth, isLoggedIn, logout, startLogin } from "@/lib/fiken-browser-auth"
 import { formatDay, formatMonth } from "@/lib/format"
 import { looksLikeHotelInvoice } from "@/lib/hotel"
 import { listHotelInvoices } from "@/lib/hotel-booking"
 import { formatNok } from "@/lib/plan"
 import { cn } from "@/lib/utils"
+import { looksLikeUtleggsrapport } from "@/lib/utlegg"
+import { listUtleggDocuments } from "@/lib/utlegg-booking"
 
 /**
- * The app's screens: the inbox, a bilag from it, the hotel's invoice, or a local file. They all
+ * The app's screens: the inbox, a bilag from it, the hotel's invoice, an utleggsrapport, or a local
+ * file. They all
  * live in this one page; nginx (and the dev rewrite in next.config.ts) serves it for every path
  * without a file.
  */
@@ -46,6 +51,7 @@ type Route =
   | { page: "inbox" }
   | { page: "bilag"; documentId: string }
   | { page: "hotell"; ehfId: string }
+  | { page: "utlegg"; documentId: string }
   | { page: "file" }
 
 function parseRoute(pathname: string): Route | undefined {
@@ -54,6 +60,8 @@ function parseRoute(pathname: string): Route | undefined {
   if (path === "/fil") return { page: "file" }
   const ehfId = path.match(/^\/hotell\/(\d+)$/)?.[1]
   if (ehfId) return { page: "hotell", ehfId }
+  const utleggId = path.match(/^\/utlegg\/(\d+)$/)?.[1]
+  if (utleggId) return { page: "utlegg", documentId: utleggId }
   const documentId = path.match(/^\/bilag\/(\d+)$/)?.[1]
   return documentId ? { page: "bilag", documentId } : undefined
 }
@@ -160,20 +168,30 @@ const hotelQuery = (client?: Fiken) =>
     enabled: client !== undefined && config.hotel !== undefined,
   })
 
-/** Whether a picked PDF is the hotel's invoice or a Checkin bilag. */
+const utleggQuery = (client?: Fiken) =>
+  queryOptions({
+    queryKey: ["utlegg-docs", client?.companySlug],
+    queryFn: () =>
+      client && config.utlegg
+        ? listUtleggDocuments(client, config.utlegg)
+        : Promise.reject(new Error("Ikke koblet til Fiken")),
+    enabled: client !== undefined && config.utlegg !== undefined,
+  })
+
+/** Whether a picked PDF is the hotel's invoice, an utleggsrapport or a Checkin bilag. */
 const fileKindQuery = (file?: File) =>
   queryOptions({
     queryKey: ["file-kind", file?.name, file?.size, file?.lastModified],
     // Anything that isn't clearly the hotel's invoice opens as a Checkin bilag, which explains
     // what it couldn't read.
-    queryFn: async () =>
-      file &&
-      (await pdfPages(new Uint8Array(await file.arrayBuffer())).then(
-        looksLikeHotelInvoice,
-        () => false,
-      ))
-        ? ("hotel" as const)
-        : ("checkin" as const),
+    queryFn: async () => {
+      const pages = file
+        ? await pdfPages(new Uint8Array(await file.arrayBuffer())).catch(() => undefined)
+        : undefined
+      if (pages && looksLikeHotelInvoice(pages)) return "hotel" as const
+      if (pages && looksLikeUtleggsrapport(pages)) return "utlegg" as const
+      return "checkin" as const
+    },
     enabled: file !== undefined,
     staleTime: Number.POSITIVE_INFINITY,
   })
@@ -188,6 +206,7 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
   const queryClient = useQueryClient()
   const docId = route.page === "bilag" ? route.documentId : undefined
   const ehfId = route.page === "hotell" ? route.ehfId : undefined
+  const utleggId = route.page === "utlegg" ? route.documentId : undefined
   const fileOpen = route.page === "file"
 
   const session = useQuery({
@@ -210,6 +229,7 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
   )
   const inbox = useQuery(inboxQuery(client))
   const hotelInvoices = useQuery(hotelQuery(client))
+  const utleggDocs = useQuery(utleggQuery(client))
 
   const choose = (c: Company) => {
     localStorage.setItem(COMPANY_KEY, c.slug)
@@ -227,6 +247,15 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
       : ehf
         ? { kind: "ehf", doc: ehf }
         : undefined
+  const utleggDoc = utleggId
+    ? utleggDocs.data?.find((d) => String(d.documentId) === utleggId)
+    : undefined
+  const utleggSelection: UtleggSelection | undefined =
+    file && fileKind.data === "utlegg"
+      ? { kind: "file", file }
+      : utleggDoc
+        ? { kind: "utlegg", doc: utleggDoc }
+        : undefined
   const selection: Selection | undefined =
     file && fileKind.data === "checkin"
       ? { kind: "file", file }
@@ -240,9 +269,10 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
     if (lostFile) window.history.replaceState(null, "", "/")
   }, [lostFile])
 
-  const open = (s: Selection | HotelSelection) => {
+  const open = (s: Selection | HotelSelection | UtleggSelection) => {
     if (s.kind === "inbox") return navigate(`/bilag/${s.doc.documentId}`)
     if (s.kind === "ehf") return navigate(`/hotell/${s.doc.ehfDocumentId}`)
+    if (s.kind === "utlegg") return navigate(`/utlegg/${s.doc.documentId}`)
     queryClient.setQueryData(FILE_KEY, s.file)
     navigate("/fil")
   }
@@ -303,6 +333,17 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
     )
   }
 
+  if (utleggSelection && session.data && company && client) {
+    return (
+      <UtleggReviewScreen
+        client={client}
+        companyName={company.name}
+        selection={utleggSelection}
+        onBack={() => navigate()}
+      />
+    )
+  }
+
   if (file && !fileKind.data && !fileKind.isError) return <AppLoading label="Åpner bilaget…" />
 
   if (selection && session.data && company && client) {
@@ -326,6 +367,25 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
         }
         title="Fant ikke fakturaen"
         body="Den ligger ikke som EHF fra hotellet i Fiken."
+        actions={
+          <Button onClick={() => navigate()} className="w-full sm:w-auto">
+            Til innboksen
+          </Button>
+        }
+      />
+    )
+  }
+
+  // Opened from a link or reload: wait for the list to know which report it is.
+  if (utleggId && !utleggDocs.isError) {
+    if (!utleggDocs.data) return <AppLoading label="Åpner utleggsrapporten…" />
+    return (
+      <ErrorScreen
+        illustration={
+          <FileQuestion className="mx-auto size-20 text-[var(--color-fg-brand)]" aria-hidden />
+        }
+        title="Fant ikke utleggsrapporten"
+        body="Den ligger ikke i innboksen i Fiken."
         actions={
           <Button onClick={() => navigate()} className="w-full sm:w-auto">
             Til innboksen
@@ -470,7 +530,7 @@ function Picker({
   onPick,
 }: {
   client?: Fiken
-  onPick: (s: Selection | HotelSelection) => void
+  onPick: (s: Selection | HotelSelection | UtleggSelection) => void
 }) {
   const inbox = useQuery(inboxQuery(client))
   const docs = inbox.data ?? []
@@ -553,6 +613,8 @@ function Picker({
         )}
       </div>
 
+      {config.utlegg ? <UtleggPicker client={client} onPick={onPick} /> : null}
+
       {config.hotel ? <HotelPicker client={client} onPick={onPick} /> : null}
 
       <div className="flex flex-col gap-3">
@@ -570,8 +632,8 @@ function Picker({
               <span className="min-w-0 flex-1 font-normal">
                 <span className="block font-semibold">Velg PDF</span>
                 <span className="mt-1 block text-sm opacity-70">
-                  Se tallene og kontrollene for et bilag eller hotellfakturaen. For å føre den må
-                  den ligge i Fiken.
+                  Se tallene og kontrollene for et bilag, en utleggsrapport eller hotellfakturaen.
+                  For å føre den må den ligge i Fiken.
                 </span>
               </span>
               <input
@@ -589,6 +651,87 @@ function Picker({
         </div>
       </div>
     </>
+  )
+}
+
+/** Utleggsrapporter from the utlegg form, waiting in the inbox. */
+function UtleggPicker({
+  client,
+  onPick,
+}: {
+  client?: Fiken
+  onPick: (s: UtleggSelection) => void
+}) {
+  const docs = useQuery(utleggQuery(client))
+  return (
+    <div className="flex flex-col gap-3">
+      <SectionLabel>Utlegg</SectionLabel>
+      {docs.isError ? (
+        <Alert variant="destructive">
+          <AlertTitle>Klarte ikke å hente utleggsrapporter</AlertTitle>
+          <AlertDescription>{docs.error.message}</AlertDescription>
+        </Alert>
+      ) : null}
+      {docs.data && docs.data.length === 0 ? (
+        <p className="text-sm text-[var(--color-fg-base)]/60">
+          Ingen utleggsrapporter i innboksen. De kommer fra utleggsskjemaet.
+        </p>
+      ) : null}
+      {docs.isError || (docs.data && docs.data.length === 0) ? null : (
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {docs.data ? (
+            docs.data.map((doc) => (
+              <li key={doc.documentId} className="flex min-w-0">
+                <UtleggCard doc={doc} onPick={() => onPick({ kind: "utlegg", doc })} />
+              </li>
+            ))
+          ) : (
+            <li className="contents">
+              <PickerLoading label="Henter utleggsrapporter fra innboksen…" />
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function UtleggCard({ doc, onPick }: { doc: InboxDocument; onPick: () => void }) {
+  return (
+    <Button
+      variant="surface"
+      onClick={onPick}
+      className="flex h-auto w-full flex-col items-stretch justify-start gap-3 p-4 text-left text-base whitespace-normal"
+    >
+      <span className="flex items-start gap-3">
+        <span
+          className={cn(
+            "flex size-10 shrink-0 items-center justify-center rounded-full",
+            doc.status
+              ? "bg-white/5 text-[var(--color-fg-base)]/60"
+              : "bg-[var(--color-fg-brand)]/15 text-[var(--color-fg-brand)]",
+          )}
+        >
+          <ReceiptText className="size-5" aria-hidden />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col font-normal">
+          <span className="font-display text-2xl leading-tight break-words">{doc.name}</span>
+          <span className="mt-0.5 truncate text-sm opacity-60">{doc.filename}</span>
+        </span>
+        {doc.status ? (
+          <Badge variant="outline" className="text-[var(--color-fg-base)]/70">
+            <Check aria-hidden />
+            Ført
+          </Badge>
+        ) : (
+          <Badge>Ikke ført</Badge>
+        )}
+      </span>
+      <span className="flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-sm font-normal">
+        <span className="opacity-60">Mottatt {formatDay(doc.createdAt)}</span>
+        <ChevronRight className="size-5 shrink-0 opacity-60" aria-hidden />
+      </span>
+    </Button>
   )
 }
 

@@ -5,6 +5,7 @@ import type { Box } from "./checkin.ts"
 import type { Config } from "./config.ts"
 import type { VatType } from "./fiken.ts"
 import type { HotelInvoice } from "./hotel.ts"
+import type { Utleggsrapport } from "./utlegg.ts"
 import { type BookedLine, effectiveVatType } from "./verify.ts"
 
 export type MarkKind = "sale" | "purchase" | "vat" | "payout" | "check" | "ignored"
@@ -124,5 +125,18 @@ export function buildHotelMarks(invoice: HotelInvoice): Mark[] {
     add(`section:${s.section}:${s.rate}`, "purchase", `${s.section} ${s.rate} %`, s.gross)
   for (const v of invoice.vatSpec) add(`vat:${v.rate}`, "vat", `Mva ${v.rate} %`, v.vat)
   add("total", "check", "Fakturatotal", invoice.total)
+  return marks
+}
+
+/** Marks on page 1 of an utleggsrapport: each receipt's amount and the total. */
+export function buildUtleggMarks(report: Utleggsrapport): Mark[] {
+  const marks: Mark[] = []
+  const add = (key: string, kind: MarkKind, label: string, amount: number) => {
+    const box = report.boxes[key]
+    if (box) marks.push({ n: marks.length + 1, key, kind, box, label, amount })
+  }
+  for (const r of report.rows)
+    if (r.amount !== undefined) add(`row:${r.n}`, "purchase", `#${r.n} ${r.description}`, r.amount)
+  if (report.total !== undefined) add("total", "check", "Total", report.total)
   return marks
 }

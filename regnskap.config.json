@@ -147,5 +147,75 @@
         "category": "crew"
       }
     ]
+  },
+  "utlegg": {
+    "$comment": "Utleggsrapporter fra utleggsskjemaet (én PDF per krav). Ett leverandørkjøp per krav med personen som leverandør, én linje per kvittering. Første regel som passer bestemmer kategorien; kategori og mva-sats kan endres i gjennomgangen.",
+    "inboxName": "expense-report",
+    "dueDays": 14,
+    "categories": [
+      {
+        "id": "reise",
+        "label": "Reise og transport",
+        "account": "7140",
+        "rate": 12,
+        "deduct": true
+      },
+      {
+        "id": "servering",
+        "label": "Servering til deltakerne",
+        "account": "4500",
+        "rate": 15,
+        "deduct": true
+      },
+      {
+        "id": "crew",
+        "label": "Mat til crew og frivillige",
+        "account": "5990",
+        "rate": 15,
+        "deduct": false
+      },
+      {
+        "id": "representasjon",
+        "label": "Middag og representasjon",
+        "account": "7350",
+        "rate": 25,
+        "deduct": false
+      },
+      {
+        "id": "materiell",
+        "label": "Materiell og rekvisita",
+        "account": "6560",
+        "rate": 25,
+        "deduct": true
+      },
+      {
+        "id": "annet",
+        "label": "Annet",
+        "account": "7790",
+        "deduct": true
+      }
+    ],
+    "rules": [
+      {
+        "text": "taxi|drosje|fly|flight|tog|train|\\bvy\\b|buss|flybuss|værnes|parkering|bompeng|ferge|hotell|hotel",
+        "category": "reise"
+      },
+      {
+        "text": "middag|dinner|speaker",
+        "category": "representasjon"
+      },
+      {
+        "text": "crew|frivillig|volunteer|rigg",
+        "category": "crew"
+      },
+      {
+        "text": "pizza|mat|snacks|kaffe|coffee|frukt|brus|vann|kake|lunsj|lunch",
+        "category": "servering"
+      },
+      {
+        "text": "teip|tape|kabel|strips|batteri|skjøte|papir|penn|tusj|skilt|plakat|print|trykk|verktøy|materiell",
+        "category": "materiell"
+      }
+    ]
   }
 }

@@ -6,6 +6,7 @@ import type { VatRate } from "./config.ts"
 import type { VatType } from "./fiken.ts"
 import type { HotelInvoice, HotelPlan, Split } from "./hotel.ts"
 import { formatNok, netFromGross, type Plan } from "./plan.ts"
+import { type UtleggPlan, type Utleggsrapport, vatTerm } from "./utlegg.ts"
 
 /** Checkin rounds VAT per ticket, we round per line, so allow a little drift. */
 const TOLERANCE_ORE = 100
@@ -825,6 +826,120 @@ export function verifyEhf(
       ok: false,
       detail: `PDF ${invoice.kid}, EHF ${ehf.kid}`,
       hint: "KID-en på kjøpet hentes fra PDF-en. Sjekk hvilken som er riktig.",
+    })
+  return checks
+}
+
+const receiptList = (ns: number[]) => ns.map((n) => `#${n}`).join(", ")
+
+/**
+ * The utleggsrapport against itself and the purchase against the report. The report has no VAT,
+ * so a rate that wasn't read from the receipt or chosen by the user fails until it is confirmed.
+ */
+export function verifyUtlegg(report: Utleggsrapport, plan: UtleggPlan): Check[] {
+  const checks: Check[] = []
+  const rowSum = report.rows.reduce((s, r) => s + (r.amount ?? 0), 0)
+  const noAmount = report.rows.filter((r) => r.amount === undefined).map((r) => r.n)
+  checks.push({
+    label: "Kvitteringene mot totalen i rapporten",
+    expected: rowSum,
+    actual: report.total ?? 0,
+    ok: report.total !== undefined && rowSum === report.total && noAmount.length === 0,
+    source: "kvitteringene",
+    reference: "rapporten",
+    hint:
+      noAmount.length > 0
+        ? `${receiptList(noAmount)} mangler beløp i ${report.payoutCurrency} (ingen valutakurs i skjemaet).`
+        : "Summen av radene stemmer ikke med totalen. Sjekk at rapporten er lest riktig.",
+  })
+
+  const missingCategory = plan.unplaced.filter((p) => !p.category).map((p) => p.row.n)
+  const missingRate = plan.unplaced
+    .filter((p) => p.category && p.rate === undefined)
+    .map((p) => p.row.n)
+  checks.push({
+    label: "Alle kvitteringene har kategori og mva-sats",
+    expected: 0,
+    actual: 0,
+    ok: plan.unplaced.length === 0 && plan.unknown.length === 0,
+    detail:
+      plan.unknown.length > 0
+        ? `Ukjent kategori: ${plan.unknown.join(", ")}`
+        : plan.unplaced.length === 0
+          ? `${plan.lines.length} kvitteringer`
+          : [
+              missingCategory.length > 0 && `uten kategori: ${receiptList(missingCategory)}`,
+              missingRate.length > 0 && `uten mva-sats: ${receiptList(missingRate)}`,
+            ]
+              .filter(Boolean)
+              .join("; "),
+    hint: "Velg kategori og mva-sats for kvitteringene, eller legg til en regel i oppskriften.",
+  })
+
+  checks.push({
+    label: "Kjøpet mot totalen i rapporten",
+    expected: plan.gross,
+    actual: report.total ?? 0,
+    ok: plan.gross === report.total,
+    source: "kjøpet",
+    reference: "rapporten",
+  })
+
+  // A rate the receipt didn't state is a guess until the user confirms it.
+  const guessed = plan.placements
+    .filter((p) => p.rateBy === "category" && plan.lines.some((l) => l.n === p.row.n && l.deduct))
+    .map((p) => p.row.n)
+  checks.push({
+    label: "Mva-satsen er lest fra kvitteringen",
+    expected: 0,
+    actual: 0,
+    ok: guessed.length === 0,
+    detail:
+      guessed.length === 0
+        ? "Satsene er lest fra kvitteringene eller valgt i gjennomgangen"
+        : `${receiptList(guessed)}: satt etter kategori`,
+    hint: "Sjekk satsen mot kvitteringen og velg den, så trekkes ikke mer mva fra enn kvitteringen viser.",
+  })
+
+  const mixed = plan.placements.filter((p) => p.row.receiptRates.length > 1).map((p) => p.row.n)
+  if (mixed.length > 0)
+    checks.push({
+      label: "Kvitteringer med flere mva-satser",
+      expected: 0,
+      actual: 0,
+      ok: false,
+      detail: `${receiptList(mixed)} nevner flere satser; hele beløpet føres med én sats`,
+      hint: "Før kvitteringen for hånd i Fiken hvis beløpet må deles på flere satser.",
+    })
+
+  const dates = report.rows.map((r) => r.date).filter(Boolean)
+  const years = [...new Set(dates.map((d) => d.slice(0, 4)))].sort()
+  const terms = [...new Set(dates.map(vatTerm))].sort()
+  checks.push({
+    label: "Kvitteringene er fra samme mva-termin",
+    expected: 0,
+    actual: 0,
+    ok: terms.length <= 1,
+    detail:
+      years.length > 1
+        ? `Kvitteringer fra ${years.join(" og ")}; kjøpet dateres ${plan.date}`
+        : terms.length > 1
+          ? `${terms.length} terminer; kjøpet og mva-fradraget dateres ${plan.date}`
+          : `Kjøpet dateres ${plan.date}, siste kvittering`,
+    hint:
+      years.length > 1
+        ? "Kostnaden havner i feil regnskapsår for de eldste kvitteringene. Be om ett krav per år."
+        : "Mva-fradraget for de eldste kvitteringene kommer en termin senere.",
+  })
+
+  if (report.validationSkipped)
+    checks.push({
+      label: "Kontonummeret er sjekket i skjemaet",
+      expected: 0,
+      actual: 0,
+      ok: false,
+      detail: "Skjemaet sier at kontrollen av kontonummeret ble hoppet over",
+      hint: "Sjekk kontonummeret med personen før utbetaling.",
     })
   return checks
 }

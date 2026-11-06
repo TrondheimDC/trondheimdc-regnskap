@@ -908,7 +908,15 @@ function SummaryRow({
   )
 }
 
-function ChecksCard({ checks, blockers }: { checks: HotelPrepared["checks"]; blockers: string[] }) {
+export function ChecksCard({
+  checks,
+  blockers,
+  subtitle = "Linjene mot side 1, mva-spesifikasjonen og fakturatotal",
+}: {
+  checks: HotelPrepared["checks"]
+  blockers: string[]
+  subtitle?: string
+}) {
   const failed = checks.filter((c) => !c.ok)
   const passed = checks.filter((c) => c.ok)
   return (
@@ -930,7 +938,7 @@ function ChecksCard({ checks, blockers }: { checks: HotelPrepared["checks"]; blo
       <Card
         icon={<ListChecks />}
         title={failed.length === 0 ? "Alt stemmer" : `${failed.length} av ${checks.length} avviker`}
-        subtitle="Linjene mot side 1, mva-spesifikasjonen og fakturatotal"
+        subtitle={subtitle}
       >
         {failed.length > 0 ? (
           <ul className="mt-4 flex flex-col gap-3">
@@ -960,8 +968,8 @@ function ChecksCard({ checks, blockers }: { checks: HotelPrepared["checks"]; blo
   )
 }
 
-/** After booking: the purchase as Fiken booked it, against the invoice total. */
-function BookedTotal({ result }: { result: HotelBookResult }) {
+/** After booking: the purchase as Fiken booked it, against the total on the PDF. */
+export function BookedTotal({ result }: { result: Pick<HotelBookResult, "total"> }) {
   if (!result.total) return null
   const { actual, expected } = result.total
   const ok = actual === expected

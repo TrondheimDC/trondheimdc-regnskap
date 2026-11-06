@@ -24,7 +24,13 @@ import {
   type ReportSource,
 } from "../lib/booking.ts"
 import { parseAmountsArg, parseReportPdf } from "../lib/checkin.ts"
-import { type Config, type HotelConfig, Month, parseConfig } from "../lib/config.ts"
+import {
+  type Config,
+  type HotelConfig,
+  Month,
+  parseConfig,
+  type UtleggConfig,
+} from "../lib/config.ts"
 import { Fiken, type InboxDocument } from "../lib/fiken.ts"
 import {
   groupByBill,
@@ -42,6 +48,21 @@ import {
   prepareHotel,
 } from "../lib/hotel-booking.ts"
 import { formatMonthNo, formatNok } from "../lib/plan.ts"
+import {
+  parseRatesArg,
+  parseRowChoicesArg,
+  parseUtleggPdf,
+  type UtleggChoices,
+} from "../lib/utlegg.ts"
+import {
+  bookUtlegg,
+  describePerson,
+  inspectUtlegg,
+  listUtleggDocuments,
+  prepareUtlegg,
+  type UtleggSource,
+  utleggBlockers,
+} from "../lib/utlegg-booking.ts"
 import { type Check, explainRounding, isRoundingCheck } from "../lib/verify.ts"
 import { createAuth, hasCredentials, login, logout } from "./auth.ts"
 
@@ -59,6 +80,9 @@ Commands:
   hotell [file.pdf]   Book the hotel's conference invoice as one supplier purchase (unpaid,
                       with due date and KID): a line per category and VAT rate.
                       Without a file the hotel's EHF is fetched from Fiken.
+  utlegg [file.pdf]   Book an utleggsrapport from the utlegg form as one supplier purchase
+                      (unpaid, with due date) from the person: a line per receipt.
+                      Without a file the report is fetched from the Fiken inbox.
   companies           List Fiken companies the token can access
   accounts            List bank accounts in Fiken (to find account codes)
   chart [range]       List the chart of accounts in Fiken (default 4000-8999)
@@ -77,7 +101,9 @@ Options:
   --ehf <id>          hotell: Fiken EHF document to read/attach (default: the hotel's unprocessed one)
   --move <list>       hotell: move bills or lines to another category, comma-separated,
                       e.g. "NO121S0000033=servering,#57=crew"
-  --account <list>    hotell: account per category instead of the recipe's, e.g. "crew=5990"
+  --account <list>    hotell, utlegg: account per category instead of the recipe's, e.g. "crew=5990"
+  --category <list>   utlegg: category per receipt, e.g. "#2=materiell,#3=reise"
+  --rate <list>       utlegg: VAT rate per receipt, e.g. "#3=12,#4=0"
   --no-attach         Do not attach any inbox document
   --offline           dry-run: skip all calls to Fiken (needs a file or --amounts)
   --company <slug>    Fiken company (default: companySlug in the config, if you have access)
@@ -102,6 +128,8 @@ const { values: rawOpts, positionals } = parseArgs({
     ehf: { type: "string" },
     move: { type: "string" },
     account: { type: "string" },
+    category: { type: "string" },
+    rate: { type: "string" },
     "no-attach": { type: "boolean", default: false },
     offline: { type: "boolean", default: false },
     company: { type: "string" },
@@ -124,6 +152,8 @@ const Options = z.object({
   ehf: z.coerce.number().int().positive().optional(),
   move: z.string().optional(),
   account: z.string().optional(),
+  category: z.string().optional(),
+  rate: z.string().optional(),
   "no-attach": z.boolean(),
   offline: z.boolean(),
   company: z.string().min(1).optional(),
@@ -727,6 +757,137 @@ async function hotelInvoice() {
   console.log("\nFerdig. Betalingen kobles til kjøpet når den kommer på banken.")
 }
 
+async function readUtleggSource(
+  client: Fiken | undefined,
+  utlegg: UtleggConfig,
+): Promise<UtleggSource> {
+  const file = args[0]
+  if (file) {
+    const data = await readFile(file).catch(() => fail(`File ${file} not found`))
+    return { report: await parseUtleggPdf(new Uint8Array(data)), description: file }
+  }
+  if (!client) fail("Give a PDF file, or log in with `pnpm foring login` to read the inbox")
+  let doc: InboxDocument | undefined
+  if (opts["inbox-doc"]) {
+    const id = opts["inbox-doc"]
+    doc = (await client.inbox({ status: "all" })).find((d) => d.documentId === id)
+    if (!doc) fail(`Inbox document ${id} not found`)
+  } else {
+    const docs = (await listUtleggDocuments(client, utlegg)).filter((d) => !d.status)
+    const list = docs
+      .map((d) => `  ${d.documentId}  ${d.createdAt.slice(0, 10)}  ${d.name} (${d.filename})`)
+      .join("\n")
+    if (docs.length !== 1)
+      fail(
+        docs.length === 0
+          ? `No unused inbox document matching "${utlegg.inboxName}". Use --inbox-doc <id> or a PDF file (see \`pnpm foring inbox\`).`
+          : `${docs.length} utleggsrapporter in the inbox, pick one with --inbox-doc <id>:\n${list}`,
+      )
+    doc = docs[0]!
+  }
+  const report = await parseUtleggPdf(await client.downloadInboxDocument(doc))
+  return { report, doc, description: `Fiken-innboks ${doc.documentId} "${doc.name}"` }
+}
+
+async function utleggClaim() {
+  const config = await loadConfig(opts.config)
+  const utlegg = config.utlegg
+  if (!utlegg) fail(`No "utlegg" recipe in ${opts.config}`)
+  const client =
+    opts.offline || (mode === "dry-run" && !(await hasCredentials()))
+      ? undefined
+      : await fiken(config)
+
+  const source = await readUtleggSource(client, utlegg)
+  const choices: UtleggChoices = {
+    moves: opts.category ? parseRowChoicesArg(opts.category) : {},
+    rates: opts.rate ? parseRatesArg(opts.rate) : {},
+    accounts: opts.account ? parseAccountsArg(opts.account) : {},
+  }
+  const prepared = prepareUtlegg(source, utlegg, choices)
+  const { report } = source
+  const { plan } = prepared
+
+  console.log(`Utleggsrapport → Fiken (${mode})`)
+  console.log(`Kilde: ${source.description}`)
+  console.log(
+    `${report.name}, ${report.email ?? "uten e-post"}, ${report.bankAccount ? `konto ${report.bankAccount}` : report.iban ? `IBAN ${report.iban}` : "uten kontonummer"}, utbetaling i ${report.payoutCurrency}`,
+  )
+  console.log(
+    `Laget ${report.generated ?? "?"}, ${report.rows.length} kvitteringer, total ${formatNok(report.total ?? 0)}`,
+  )
+
+  const label = (id?: string) =>
+    utlegg.categories.find((c) => c.id === id)?.label ?? "uten kategori"
+  const rateBy = {
+    choice: "valgt",
+    receipt: "fra kvitteringen",
+    currency: "utenlandsk",
+    category: "etter kategori",
+  }
+  console.log("")
+  for (const p of plan.placements) {
+    const by = p.by === "moved" ? "flyttet" : p.by === "none" ? "" : `regel ${p.by.rule + 1}`
+    const rate = p.rate === undefined ? "mva ?" : `${p.rate} % ${p.rateBy ? rateBy[p.rateBy] : ""}`
+    console.log(
+      `  #${String(p.row.n).padEnd(3)} ${p.row.date}  ${p.row.description.slice(0, 40).padEnd(40)} ${(p.row.amount === undefined ? "—" : formatNok(p.row.amount)).padStart(14)}  [${p.category ?? "?"}] ${label(p.category)}, ${rate}${by ? `, ${by}` : ""}${p.row.receiptHasText ? "" : ", bilde"}`,
+    )
+  }
+
+  printLines(
+    `\nKjøp fra ${report.name}, referanse "${plan.reference}", dato ${plan.date}, forfall ${plan.dueDate}, ikke betalt`,
+    plan.lines,
+    plan.gross,
+  )
+
+  console.log("\nKontroller mot rapporten")
+  let checksOk = printChecks(prepared.checks)
+
+  if (!client) {
+    console.log("\n(Ingen kontakt med Fiken: ikke innlogget eller --offline er satt)")
+    return
+  }
+
+  const state = await inspectUtlegg(client, source, plan, { attach: !opts["no-attach"] })
+  console.log(
+    `\nFiken: ${state.company.name} (${state.company.slug})${state.company.testCompany ? " [testselskap]" : ""}`,
+  )
+  if (state.person) step(describePerson(state.person))
+  if (state.doc) step(`Vedlegg: ${state.doc.documentId} "${state.doc.name}"`)
+  const names = new Map(state.accounts.map((a) => [a.code, a.name]))
+  for (const account of new Set(plan.lines.map((l) => l.account)))
+    if (names.has(account)) step(`Konto ${account} ${names.get(account) ?? ""}`)
+  for (const n of state.notes) console.log(`  ! ${n}`)
+  const blockers = utleggBlockers(prepared, state)
+  for (const b of blockers) warn(b)
+  checksOk = checksOk && blockers.length === 0
+  if (blockers.length > 0) fail("Kan ikke føre, se ✗ over.")
+
+  if (mode === "dry-run") {
+    console.log("\nDry run: ingenting er skrevet til Fiken. Bruk --mode draft eller --mode create.")
+    return
+  }
+
+  const what = `${state.person?.status === "new" ? `Legg inn ${report.name} som leverandør og ` : ""}${mode === "draft" ? "lag kjøpsutkast" : "bokfør kjøpet"} på ${formatNok(plan.gross)} i Fiken`
+  if (!(await confirm(what, checksOk))) {
+    console.log("Avbrutt, ingenting er skrevet til Fiken.")
+    return
+  }
+  console.log("")
+  const result = await bookUtlegg(client, prepared, state, mode, step)
+  if (result.total) {
+    const { actual, expected } = result.total
+    if (actual === expected) step(`Kjøpet i Fiken: ${formatNok(actual)}`)
+    else
+      warn(
+        `Kjøpet i Fiken er ${formatNok(actual)}, forventet ${formatNok(expected)}. Sjekk det i Fiken.`,
+      )
+  }
+  console.log(
+    "\nFerdig. Økonomiansvarlig betaler kjøpet fra Fiken; betalingen kobles i bankavstemmingen.",
+  )
+}
+
 async function main() {
   if (opts.help || !command || command === "help") {
     console.log(HELP)
@@ -740,6 +901,8 @@ async function main() {
     case "hotell":
     case "hotel":
       return hotelInvoice()
+    case "utlegg":
+      return utleggClaim()
     case "login":
       return login()
     case "logout":
