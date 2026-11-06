@@ -1,6 +1,12 @@
 "use client"
 
-import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  queryOptions,
+  type UseQueryResult,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query"
 import {
   Building2,
   Check,
@@ -8,7 +14,6 @@ import {
   FileQuestion,
   FileText,
   Hotel,
-  Inbox,
   LogIn,
   LogOut,
   ReceiptText,
@@ -20,6 +25,12 @@ import { type ReactNode, useEffect, useMemo, useState } from "react"
 import { AppLoading } from "@/components/app-loading"
 import { ErrorScreen } from "@/components/error-screen"
 import { HotelReviewScreen, type HotelSelection } from "@/components/hotel-review-screen"
+import {
+  TAccountBookedIllustration,
+  TAccountErrorIllustration,
+  TAccountUploadIllustration,
+  TAccountWaitingIllustration,
+} from "@/components/illustrations"
 import { NotFoundScreen } from "@/components/not-found-screen"
 import { ReviewScreen, type Selection } from "@/components/review-screen"
 import { TdcLogo } from "@/components/tdc-logo"
@@ -48,7 +59,7 @@ import { listUtleggDocuments } from "@/lib/utlegg-booking"
  * without a file.
  */
 type Route =
-  | { page: "inbox" }
+  | { page: "inbox"; tab: Tab }
   | { page: "bilag"; documentId: string }
   | { page: "hotell"; ehfId: string }
   | { page: "utlegg"; documentId: string }
@@ -56,7 +67,8 @@ type Route =
 
 function parseRoute(pathname: string): Route | undefined {
   const path = pathname.replace(/\/+$/, "") || "/"
-  if (path === "/") return { page: "inbox" }
+  const tab = TABS.find((t) => TAB_PATH[t] === path)
+  if (tab) return { page: "inbox", tab }
   if (path === "/fil") return { page: "file" }
   const ehfId = path.match(/^\/hotell\/(\d+)$/)?.[1]
   if (ehfId) return { page: "hotell", ehfId }
@@ -64,6 +76,25 @@ function parseRoute(pathname: string): Route | undefined {
   if (utleggId) return { page: "utlegg", documentId: utleggId }
   const documentId = path.match(/^\/bilag\/(\d+)$/)?.[1]
   return documentId ? { page: "bilag", documentId } : undefined
+}
+
+/** The front page shows one kind of bilag at a time; each tab has its own path. */
+type Tab = "utlegg" | "checkin" | "hotell" | "adhoc"
+
+/** The configured tabs, in order. The first is the front page. */
+const TABS: Tab[] = [
+  ...(config.utlegg ? (["utlegg"] as const) : []),
+  "checkin",
+  ...(config.hotel ? (["hotell"] as const) : []),
+  "adhoc",
+]
+
+const TAB_PATH: Record<Tab, string> = {
+  utlegg: "/utlegg",
+  checkin: "/checkin",
+  hotell: "/hotell",
+  adhoc: "/ad-hoc",
+  ...{ [TABS[0] ?? "checkin"]: "/" },
 }
 
 /**
@@ -266,7 +297,7 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
   // After a reload the file is gone; show the inbox instead of a dead link.
   const lostFile = fileOpen && file === undefined
   useEffect(() => {
-    if (lostFile) window.history.replaceState(null, "", "/")
+    if (lostFile) window.history.replaceState(null, "", TAB_PATH.adhoc)
   }, [lostFile])
 
   const open = (s: Selection | HotelSelection | UtleggSelection) => {
@@ -328,7 +359,7 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
         client={client}
         companyName={company.name}
         selection={hotelSelection}
-        onBack={() => navigate()}
+        onBack={() => navigate(TAB_PATH[hotelSelection.kind === "file" ? "adhoc" : "hotell"])}
       />
     )
   }
@@ -339,7 +370,7 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
         client={client}
         companyName={company.name}
         selection={utleggSelection}
-        onBack={() => navigate()}
+        onBack={() => navigate(TAB_PATH[utleggSelection.kind === "file" ? "adhoc" : "utlegg"])}
       />
     )
   }
@@ -352,7 +383,7 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
         client={client}
         companyName={company.name}
         selection={selection}
-        onBack={() => navigate()}
+        onBack={() => navigate(TAB_PATH[selection.kind === "file" ? "adhoc" : "checkin"])}
       />
     )
   }
@@ -368,8 +399,8 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
         title="Fant ikke fakturaen"
         body="Den ligger ikke som EHF fra hotellet i Fiken."
         actions={
-          <Button onClick={() => navigate()} className="w-full sm:w-auto">
-            Til innboksen
+          <Button onClick={() => navigate(TAB_PATH.hotell)} className="w-full sm:w-auto">
+            Til hotellfakturaer
           </Button>
         }
       />
@@ -387,8 +418,8 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
         title="Fant ikke utleggsrapporten"
         body="Den ligger ikke i innboksen i Fiken."
         actions={
-          <Button onClick={() => navigate()} className="w-full sm:w-auto">
-            Til innboksen
+          <Button onClick={() => navigate(TAB_PATH.utlegg)} className="w-full sm:w-auto">
+            Til utlegg
           </Button>
         }
       />
@@ -406,8 +437,8 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
         title="Fant ikke bilaget"
         body="Det ligger ikke i innboksen i Fiken."
         actions={
-          <Button onClick={() => navigate()} className="w-full sm:w-auto">
-            Til innboksen
+          <Button onClick={() => navigate(TAB_PATH.checkin)} className="w-full sm:w-auto">
+            Til Checkin-bilag
           </Button>
         }
       />
@@ -451,7 +482,11 @@ function Workspace({ route, onLogout }: { route: Route; onLogout: () => void }) 
         </Button>
       </div>
 
-      <Picker client={client} onPick={open} />
+      <Picker
+        tab={route.page === "inbox" ? route.tab : (TABS[0] ?? "checkin")}
+        client={client}
+        onPick={open}
+      />
     </Screen>
   )
 }
@@ -512,130 +547,226 @@ function CompanyPicker({
   )
 }
 
-/** Same footprint as the cards, so the grid doesn't jump when the inbox arrives. */
-function PickerLoading({ label = "Henter bilag fra innboksen…" }: { label?: string }) {
+// Show only what is left to book, or everything. Per viewer; not a secret.
+const FILTER_KEY = "regnskap.filter"
+type Filter = "open" | "all"
+
+function readFilter(): Filter {
+  try {
+    return localStorage.getItem(FILTER_KEY) === "all" ? "all" : "open"
+  } catch {
+    return "open"
+  }
+}
+
+const TAB_LABEL: Record<Tab, string> = {
+  utlegg: "Utlegg",
+  checkin: "Checkin",
+  hotell: "Hotell",
+  adhoc: "Ad hoc",
+}
+const TAB_ICON: Record<Tab, typeof FileText> = {
+  utlegg: ReceiptText,
+  checkin: FileText,
+  hotell: Hotel,
+  adhoc: Upload,
+}
+
+const isOpenReport = (d: ReportDocument) => !d.used
+const isOpenUtlegg = (d: InboxDocument) => !d.status
+const isOpenHotel = (d: EhfDocument) => d.status === "unprocessed"
+
+/** How many are left to book, once the list is in. */
+function openCount<T>(data: T[] | undefined, isOpen: (d: T) => boolean) {
+  return data?.filter(isOpen).length
+}
+
+function Picker({
+  tab,
+  client,
+  onPick,
+}: {
+  tab: Tab
+  client?: Fiken
+  onPick: (s: Selection | HotelSelection | UtleggSelection) => void
+}) {
+  const [filter, setFilterState] = useState(readFilter)
+  const setFilter = (f: Filter) => {
+    setFilterState(f)
+    try {
+      localStorage.setItem(FILTER_KEY, f)
+    } catch {}
+  }
+
+  const inbox = useQuery(inboxQuery(client))
+  const utlegg = useQuery(utleggQuery(client))
+  const hotel = useQuery(hotelQuery(client))
+  const counts: Record<Tab, number | undefined> = {
+    checkin: openCount(inbox.data, isOpenReport),
+    utlegg: openCount(utlegg.data, isOpenUtlegg),
+    hotell: openCount(hotel.data, isOpenHotel),
+    adhoc: undefined,
+  }
+  const active = tab === "adhoc" ? undefined : { checkin: inbox, utlegg, hotell: hotel }[tab]
+  const showAll = () => setFilter("all")
+  const panelId = `panel-${tab}`
+
   return (
-    <div
-      aria-busy="true"
-      className="flex min-h-[9.5rem] items-center justify-center gap-3 rounded-xl bg-[var(--color-bg-surface)]/50 text-sm text-[var(--color-fg-base)]/60 sm:col-span-2 lg:col-span-3"
-    >
-      <Spinner />
-      {label}
+    <div className="flex flex-col gap-4">
+      {TABS.length > 1 ? <Tabs current={tab} counts={counts} panelId={panelId} /> : null}
+
+      {active ? (
+        <div className="flex items-center gap-2">
+          <fieldset className="flex rounded-xl bg-[var(--color-bg-surface)] p-1">
+            <legend className="sr-only">Vis</legend>
+            {(
+              [
+                ["open", "Ikke ført"],
+                ["all", "Alle"],
+              ] as const
+            ).map(([value, label]) => (
+              <Button
+                key={value}
+                variant="ghost"
+                size="sm"
+                aria-pressed={filter === value}
+                onClick={() => setFilter(value)}
+                className={cn(
+                  "rounded-lg",
+                  filter === value
+                    ? "bg-[var(--color-fg-brand)]/15 text-[var(--color-fg-brand)] hover:bg-[var(--color-fg-brand)]/20"
+                    : "text-[var(--color-fg-base)]/70",
+                )}
+              >
+                {label}
+              </Button>
+            ))}
+          </fieldset>
+          <span className="flex-1" />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => active.refetch()}
+            disabled={active.isFetching}
+            aria-label="Oppdater"
+            className="text-[var(--color-fg-base)]/70"
+          >
+            <RefreshCw className={cn("size-4", active.isFetching && "animate-spin")} aria-hidden />
+            <span className="hidden sm:inline">Oppdater</span>
+          </Button>
+        </div>
+      ) : null}
+
+      <div
+        id={panelId}
+        {...(TABS.length > 1 ? { role: "tabpanel", "aria-labelledby": `tab-${tab}` } : {})}
+        className="min-h-[26rem]"
+      >
+        {tab === "adhoc" ? (
+          <FileDrop onFile={(file) => onPick({ kind: "file", file })} />
+        ) : tab === "checkin" ? (
+          <DocList
+            key={`checkin-${filter}`}
+            query={inbox}
+            filter={filter}
+            isOpen={isOpenReport}
+            keyOf={(d) => d.documentId}
+            card={(doc) => <ReportCard doc={doc} onPick={() => onPick({ kind: "inbox", doc })} />}
+            loading="Henter bilag fra innboksen…"
+            error="Klarte ikke å hente innboksen"
+            none={{
+              title: "Ingen bilag ennå",
+              body: "Checkin sender bilaget for forrige måned til innboksen i Fiken tidlig i måneden.",
+            }}
+            done={{
+              title: "Alt er ført",
+              body: "Neste bilag fra Checkin kommer tidlig i neste måned.",
+            }}
+            onShowAll={showAll}
+          />
+        ) : tab === "utlegg" ? (
+          <DocList
+            key={`utlegg-${filter}`}
+            query={utlegg}
+            filter={filter}
+            isOpen={isOpenUtlegg}
+            keyOf={(d) => d.documentId}
+            card={(doc) => <UtleggCard doc={doc} onPick={() => onPick({ kind: "utlegg", doc })} />}
+            loading="Henter utleggsrapporter fra innboksen…"
+            error="Klarte ikke å hente utleggsrapporter"
+            none={{
+              title: "Ingen utleggsrapporter",
+              body: "De kommer til innboksen i Fiken når noen sender utleggsskjemaet.",
+            }}
+            done={{
+              title: "Alle utlegg er ført",
+              body: "Nye utleggsrapporter dukker opp her når de kommer til innboksen.",
+            }}
+            onShowAll={showAll}
+          />
+        ) : (
+          <DocList
+            key={`hotell-${filter}`}
+            query={hotel}
+            filter={filter}
+            isOpen={isOpenHotel}
+            keyOf={(d) => d.ehfDocumentId}
+            card={(doc) => <HotelCard doc={doc} onPick={() => onPick({ kind: "ehf", doc })} />}
+            loading="Henter fakturaer fra Fiken…"
+            error="Klarte ikke å hente EHF-fakturaer"
+            none={{
+              title: "Ingen hotellfaktura",
+              body: "Fakturaen kommer som EHF i Fiken etter konferansen.",
+            }}
+            done={{
+              title: "Hotellfakturaen er ført",
+              body: "Det ligger ingen ubrukte EHF-er fra hotellet i Fiken.",
+            }}
+            onShowAll={showAll}
+          />
+        )}
+      </div>
     </div>
   )
 }
 
-function Picker({
-  client,
-  onPick,
-}: {
-  client?: Fiken
-  onPick: (s: Selection | HotelSelection | UtleggSelection) => void
-}) {
-  const inbox = useQuery(inboxQuery(client))
-  const docs = inbox.data ?? []
-  const unused = docs.filter((d) => !d.used).length
-
+/** Ad hoc: open any PDF from disk, by picking it or dropping it here. */
+function FileDrop({ onFile }: { onFile: (file: File) => void }) {
+  const [over, setOver] = useState(false)
   return (
-    <>
-      <div className="flex flex-col gap-3">
-        <SectionLabel
-          aside={
-            inbox.data ? (
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() => inbox.refetch()}
-                disabled={inbox.isFetching}
-                className="text-[var(--color-fg-base)]/70"
-              >
-                <RefreshCw
-                  className={cn("size-3.5", inbox.isFetching && "animate-spin")}
-                  aria-hidden
-                />
-                Oppdater
-              </Button>
-            ) : null
-          }
-        >
-          Regnskapsbilag fra Checkin
-        </SectionLabel>
-
-        {inbox.isError ? (
-          <Alert variant="destructive">
-            <AlertTitle>Klarte ikke å hente innboksen</AlertTitle>
-            <AlertDescription>{inbox.error.message}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        {inbox.data && docs.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 rounded-xl bg-[var(--color-bg-surface)] px-6 py-10 text-center">
-            <span className="flex size-14 items-center justify-center rounded-full bg-[var(--color-fg-brand)]/15 text-[var(--color-fg-brand)]">
-              <Inbox className="size-7" aria-hidden />
-            </span>
-            <h2 className="text-2xl">Ingen bilag ennå</h2>
-            <p className="max-w-xs text-sm text-[var(--color-fg-base)]/70">
-              Checkin sender bilaget for forrige måned til innboksen i Fiken tidlig i måneden.
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => inbox.refetch()}
-              disabled={inbox.isFetching}
-            >
-              <RefreshCw className="size-4" aria-hidden />
-              Se etter nye
-            </Button>
-          </div>
-        ) : null}
-
-        {inbox.data && docs.length > 0 && unused === 0 ? (
-          <p className="text-sm text-[var(--color-fg-base)]/60">
-            Alt er ført. Neste bilag kommer tidlig i neste måned. Åpne et ført bilag for å
-            kontrollere det.
-          </p>
-        ) : null}
-
-        {inbox.isError || (inbox.data && docs.length === 0) ? null : (
-          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {inbox.data ? (
-              docs.map((doc) => (
-                <li key={doc.documentId} className="flex min-w-0">
-                  <ReportCard doc={doc} onPick={() => onPick({ kind: "inbox", doc })} />
-                </li>
-              ))
-            ) : (
-              <li className="contents">
-                <PickerLoading />
-              </li>
-            )}
-          </ul>
-        )}
+    // biome-ignore lint/a11y/noStaticElementInteractions: drop target only; "Velg PDF" is the accessible way in.
+    <section
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return
+        e.preventDefault()
+        setOver(true)
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setOver(false)
+        const file = [...e.dataTransfer.files].find((f) => f.type === "application/pdf")
+        if (file) onFile(file)
+      }}
+      className={cn(
+        "flex min-h-[26rem] flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-10 text-center transition-colors",
+        over ? "border-[var(--color-fg-brand)] bg-[var(--color-fg-brand)]/5" : "border-white/15",
+      )}
+    >
+      <div className="error-reveal w-full max-w-56">
+        <TAccountUploadIllustration />
       </div>
-
-      {config.utlegg ? <UtleggPicker client={client} onPick={onPick} /> : null}
-
-      {config.hotel ? <HotelPicker client={client} onPick={onPick} /> : null}
-
-      <div className="flex flex-col gap-3">
-        <SectionLabel>Fra fil</SectionLabel>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <Button
-            asChild
-            variant="surface"
-            className="flex h-auto w-full items-start justify-start gap-3 px-4 py-4 text-left text-base whitespace-normal"
-          >
+      <div className="attendee-stagger mt-6 flex flex-col items-center">
+        <h2 className="text-2xl">Åpne en PDF</h2>
+        <p className="mt-2 max-w-sm text-sm text-[var(--color-fg-base)]/70">
+          Se tallene og kontrollene for et bilag, en utleggsrapport eller hotellfakturaen. For å
+          føre den må den ligge i Fiken.
+        </p>
+        <div className="mt-6">
+          <Button asChild variant="outline">
             <label>
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-white/5">
-                <Upload className="size-5" aria-hidden />
-              </span>
-              <span className="min-w-0 flex-1 font-normal">
-                <span className="block font-semibold">Velg PDF</span>
-                <span className="mt-1 block text-sm opacity-70">
-                  Se tallene og kontrollene for et bilag, en utleggsrapport eller hotellfakturaen.
-                  For å føre den må den ligge i Fiken.
-                </span>
-              </span>
+              <Upload className="size-5" aria-hidden />
+              Velg PDF
               <input
                 type="file"
                 accept="application/pdf"
@@ -643,56 +774,212 @@ function Picker({
                 onChange={(e) => {
                   const file = e.target.files?.[0]
                   e.target.value = ""
-                  if (file) onPick({ kind: "file", file })
+                  if (file) onFile(file)
                 }}
               />
             </label>
           </Button>
         </div>
+        <p className="mt-3 hidden text-xs text-[var(--color-fg-base)]/50 sm:block">
+          eller slipp den her
+        </p>
       </div>
-    </>
+    </section>
   )
 }
 
-/** Utleggsrapporter from the utlegg form, waiting in the inbox. */
-function UtleggPicker({
-  client,
-  onPick,
+/** Utlegg / Checkin / Hotell / Ad hoc; the lists show how many are left to book. */
+function Tabs({
+  current,
+  counts,
+  panelId,
 }: {
-  client?: Fiken
-  onPick: (s: UtleggSelection) => void
+  current: Tab
+  counts: Record<Tab, number | undefined>
+  panelId: string
 }) {
-  const docs = useQuery(utleggQuery(client))
+  const go = (t: Tab) => {
+    if (t !== current) navigate(TAB_PATH[t])
+    document.getElementById(`tab-${t}`)?.focus()
+  }
   return (
-    <div className="flex flex-col gap-3">
-      <SectionLabel>Utlegg</SectionLabel>
-      {docs.isError ? (
-        <Alert variant="destructive">
-          <AlertTitle>Klarte ikke å hente utleggsrapporter</AlertTitle>
-          <AlertDescription>{docs.error.message}</AlertDescription>
-        </Alert>
-      ) : null}
-      {docs.data && docs.data.length === 0 ? (
-        <p className="text-sm text-[var(--color-fg-base)]/60">
-          Ingen utleggsrapporter i innboksen. De kommer fra utleggsskjemaet.
-        </p>
-      ) : null}
-      {docs.isError || (docs.data && docs.data.length === 0) ? null : (
-        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {docs.data ? (
-            docs.data.map((doc) => (
-              <li key={doc.documentId} className="flex min-w-0">
-                <UtleggCard doc={doc} onPick={() => onPick({ kind: "utlegg", doc })} />
-              </li>
-            ))
-          ) : (
-            <li className="contents">
-              <PickerLoading label="Henter utleggsrapporter fra innboksen…" />
-            </li>
-          )}
-        </ul>
-      )}
+    <div
+      role="tablist"
+      aria-label="Bilagstype"
+      className="grid gap-1 rounded-2xl bg-[var(--color-bg-surface)] p-1"
+      style={{ gridTemplateColumns: `repeat(${TABS.length}, minmax(0, 1fr))` }}
+      onKeyDown={(e) => {
+        const i = TABS.indexOf(current)
+        const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0
+        if (!step) return
+        e.preventDefault()
+        go(TABS[(i + step + TABS.length) % TABS.length] ?? current)
+      }}
+    >
+      {TABS.map((t) => {
+        const Icon = TAB_ICON[t]
+        const selected = t === current
+        const count = counts[t]
+        return (
+          <Button
+            key={t}
+            id={`tab-${t}`}
+            role="tab"
+            aria-selected={selected}
+            aria-controls={selected ? panelId : undefined}
+            tabIndex={selected ? 0 : -1}
+            variant="ghost"
+            size="sm"
+            onClick={() => go(t)}
+            className={cn(
+              "h-14 min-w-0 flex-col gap-0.5 px-1 text-xs sm:h-11 sm:flex-row sm:gap-2 sm:px-2 sm:text-base",
+              selected
+                ? "bg-[var(--color-bg-base)] text-[var(--color-fg-base)] hover:bg-[var(--color-bg-base)]"
+                : "text-[var(--color-fg-base)]/60",
+            )}
+          >
+            <Icon
+              className={cn("size-5 sm:size-4", selected && "text-[var(--color-fg-brand)]")}
+              aria-hidden
+            />
+            <span className="max-w-full truncate">{TAB_LABEL[t]}</span>
+            {/* Same box whether the count is in or not, so the tabs don't shift. On phones it sits
+                on the icon's corner. */}
+            <span className="absolute top-1 left-[calc(50%+0.375rem)] flex h-5 min-w-5 items-center justify-center sm:static">
+              {count === undefined ? null : count > 0 ? (
+                <span className="tabular rounded-full bg-[var(--color-fg-brand)] px-1.5 text-xs leading-5 font-semibold text-[var(--color-fg-always-dark)]">
+                  {count}
+                  <span className="sr-only"> ikke ført</span>
+                </span>
+              ) : (
+                <Check className="size-4 text-[var(--color-fg-base)]/40" aria-label="Alt ført" />
+              )}
+            </span>
+          </Button>
+        )
+      })}
     </div>
+  )
+}
+
+type EmptyCopy = { title: string; body: string }
+
+/** One tab's list: loading, error, nothing received, all booked, or the cards. */
+function DocList<T>({
+  query,
+  filter,
+  isOpen,
+  keyOf,
+  card,
+  loading,
+  error,
+  none,
+  done,
+  onShowAll,
+}: {
+  query: UseQueryResult<T[]>
+  filter: Filter
+  isOpen: (d: T) => boolean
+  keyOf: (d: T) => number
+  card: (d: T) => ReactNode
+  loading: string
+  error: string
+  none: EmptyCopy
+  done: EmptyCopy
+  onShowAll: () => void
+}) {
+  if (query.isError) {
+    return (
+      <EmptyState
+        illustration={<TAccountErrorIllustration />}
+        title={error}
+        body={query.error.message}
+        action={
+          <Button onClick={() => query.refetch()} disabled={query.isFetching}>
+            <RefreshCw className="size-5" aria-hidden />
+            Prøv igjen
+          </Button>
+        }
+      />
+    )
+  }
+
+  if (!query.data) {
+    return (
+      <div
+        aria-busy="true"
+        className="flex h-[26rem] items-center justify-center gap-3 rounded-2xl bg-[var(--color-bg-surface)]/50 text-sm text-[var(--color-fg-base)]/60"
+      >
+        <Spinner />
+        {loading}
+      </div>
+    )
+  }
+
+  if (query.data.length === 0) {
+    return (
+      <EmptyState
+        illustration={<TAccountWaitingIllustration />}
+        title={none.title}
+        body={none.body}
+        action={
+          <Button variant="outline" onClick={() => query.refetch()} disabled={query.isFetching}>
+            <RefreshCw className={cn("size-5", query.isFetching && "animate-spin")} aria-hidden />
+            Se etter nye
+          </Button>
+        }
+      />
+    )
+  }
+
+  const shown = filter === "open" ? query.data.filter(isOpen) : query.data
+  if (shown.length === 0) {
+    return (
+      <EmptyState
+        illustration={<TAccountBookedIllustration />}
+        title={done.title}
+        body={done.body}
+        action={
+          <Button variant="outline" onClick={onShowAll}>
+            Vis førte ({query.data.length})
+          </Button>
+        }
+      />
+    )
+  }
+
+  return (
+    <ul className="attendee-reveal grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {shown.map((d) => (
+        <li key={keyOf(d)} className="flex min-w-0">
+          {card(d)}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** Empty or error state inside a tab: illustration, short heading, one action. */
+function EmptyState({
+  illustration,
+  title,
+  body,
+  action,
+}: {
+  illustration: ReactNode
+  title: string
+  body: string
+  action: ReactNode
+}) {
+  return (
+    <section className="flex min-h-[26rem] flex-col items-center justify-center rounded-2xl border border-white/10 px-6 py-10 text-center">
+      <div className="error-reveal w-full max-w-56">{illustration}</div>
+      <div className="attendee-stagger mt-6 flex flex-col items-center">
+        <h2 className="text-2xl">{title}</h2>
+        <p className="mt-2 max-w-sm text-sm text-[var(--color-fg-base)]/70">{body}</p>
+        <div className="mt-6">{action}</div>
+      </div>
+    </section>
   )
 }
 
@@ -732,43 +1019,6 @@ function UtleggCard({ doc, onPick }: { doc: InboxDocument; onPick: () => void })
         <ChevronRight className="size-5 shrink-0 opacity-60" aria-hidden />
       </span>
     </Button>
-  )
-}
-
-/** The hotel's conference invoices, received as EHF in Fiken. */
-function HotelPicker({ client, onPick }: { client?: Fiken; onPick: (s: HotelSelection) => void }) {
-  const invoices = useQuery(hotelQuery(client))
-  const docs = invoices.data ?? []
-  return (
-    <div className="flex flex-col gap-3">
-      <SectionLabel>Hotellfaktura</SectionLabel>
-      {invoices.isError ? (
-        <Alert variant="destructive">
-          <AlertTitle>Klarte ikke å hente EHF-fakturaer</AlertTitle>
-          <AlertDescription>{invoices.error.message}</AlertDescription>
-        </Alert>
-      ) : null}
-      {invoices.data && docs.length === 0 ? (
-        <p className="text-sm text-[var(--color-fg-base)]/60">
-          Ingen faktura fra hotellet i Fiken. Den kommer som EHF etter konferansen.
-        </p>
-      ) : null}
-      {invoices.isError || (invoices.data && docs.length === 0) ? null : (
-        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {invoices.data ? (
-            docs.map((doc) => (
-              <li key={doc.ehfDocumentId} className="flex min-w-0">
-                <HotelCard doc={doc} onPick={() => onPick({ kind: "ehf", doc })} />
-              </li>
-            ))
-          ) : (
-            <li className="contents">
-              <PickerLoading label="Henter fakturaer fra Fiken…" />
-            </li>
-          )}
-        </ul>
-      )}
-    </div>
   )
 }
 
