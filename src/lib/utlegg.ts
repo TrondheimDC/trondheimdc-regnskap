@@ -252,7 +252,7 @@ export function utleggFormat(pages: Cell[][][], info: PdfInfo = {}): number | un
   return looksLikeUtleggsrapport(pages) ? 1 : undefined
 }
 
-async function pdfInfo(data: Uint8Array): Promise<PdfInfo> {
+export async function pdfInfo(data: Uint8Array): Promise<PdfInfo> {
   try {
     const { info } = await getMeta(data.slice())
     const str = (v: unknown) => (typeof v === "string" ? v : undefined)

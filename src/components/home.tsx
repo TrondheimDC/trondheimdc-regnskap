@@ -41,15 +41,13 @@ import { Spinner } from "@/components/ui/spinner"
 import { UtleggReviewScreen, type UtleggSelection } from "@/components/utlegg-review-screen"
 import { API_BASE, config } from "@/lib/app-config"
 import { listReportDocuments, pickCompany, type ReportDocument } from "@/lib/booking"
-import { pdfPages } from "@/lib/checkin"
 import { type Company, type EhfDocument, Fiken, type InboxDocument } from "@/lib/fiken"
 import { browserAuth, isLoggedIn, logout, startLogin } from "@/lib/fiken-browser-auth"
 import { formatDay, formatMonth } from "@/lib/format"
-import { looksLikeHotelInvoice } from "@/lib/hotel"
 import { listHotelInvoices } from "@/lib/hotel-booking"
+import { detectPdfKind } from "@/lib/pdf-kind"
 import { formatNok } from "@/lib/plan"
 import { cn } from "@/lib/utils"
-import { looksLikeUtleggsrapport } from "@/lib/utlegg"
 import { listUtleggDocuments } from "@/lib/utlegg-booking"
 
 /**
@@ -213,16 +211,8 @@ const utleggQuery = (client?: Fiken) =>
 const fileKindQuery = (file?: File) =>
   queryOptions({
     queryKey: ["file-kind", file?.name, file?.size, file?.lastModified],
-    // Anything that isn't clearly the hotel's invoice opens as a Checkin bilag, which explains
-    // what it couldn't read.
-    queryFn: async () => {
-      const pages = file
-        ? await pdfPages(new Uint8Array(await file.arrayBuffer())).catch(() => undefined)
-        : undefined
-      if (pages && looksLikeHotelInvoice(pages)) return "hotel" as const
-      if (pages && looksLikeUtleggsrapport(pages)) return "utlegg" as const
-      return "checkin" as const
-    },
+    queryFn: async () =>
+      file ? detectPdfKind(new Uint8Array(await file.arrayBuffer())) : ("checkin" as const),
     enabled: file !== undefined,
     staleTime: Number.POSITIVE_INFINITY,
   })
