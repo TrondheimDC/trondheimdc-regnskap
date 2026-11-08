@@ -405,7 +405,7 @@ Gjennomgangen (web-appen og `pnpm foring utlegg`) viser én av fire ting ved per
 
 Nøkkelen er `utlegg.minTdc.publicKey` i `regnskap.config.json`: Min TDCs offentlige nøkkel som base64 SPKI (`pnpm report-key` i trondheimdc-min skriver den ut). Bare den offentlige nøkkelen, aldri den private. CLI-en kan bruke en annen med `REPORT_SIGNING_PUBLIC_KEY`, f.eks. fra en Min TDC i utvikling. Koden er `src/lib/min-tdc.ts`.
 
-Signaturen er informasjon til den som fører. Den endrer ikke føringen, og den godkjenner ingenting av seg selv.
+Uten signerte rapporter i innboksen merkes ingenting av dette: andre rapporter føres som før, bare med «Ikke fra Min TDC» ved personen. Signaturen er informasjon til den som fører. Den endrer ikke føringen, og den godkjenner ingenting av seg selv.
 
 ### Føringen
 

@@ -1,5 +1,7 @@
 # Deploy — regnskap.trondheimdc.no
 
+**Status:** live at https://regnskap.trondheimdc.no. Every push to `main` builds and deploys (`.github/workflows/cd.yml`), so a push is a release.
+
 A static site (Next.js `output: "export"`), the same way as utlegg. The only difference: nginx also proxies `/api/fiken/*` to `api.fiken.no`, because Fiken's API has no CORS.
 
 There is no app server, no database and no secret on the server. The login is OAuth with PKCE in the browser, and the token lives only in the browser tab (sessionStorage).
