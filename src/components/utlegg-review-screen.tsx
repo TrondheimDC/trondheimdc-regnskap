@@ -6,7 +6,6 @@ import {
   CircleCheck,
   FilePen,
   FileText,
-  Inbox,
   OctagonX,
   ReceiptText,
   RefreshCw,
@@ -654,11 +653,12 @@ function PersonCard({ prepared, fiken }: { prepared: UtleggPrepared; fiken: Utle
 }
 
 /**
- * Whether the report came through Min TDC, from the signature in the inbox description. For the
- * reviewer only: booking works the same either way.
+ * Whether the report came through Min TDC, from the signature in the inbox description. Nothing
+ * for a report without one. For the reviewer only: booking works the same either way.
  */
 function MinTdcRow({ result }: { result: MinTdcResult }) {
   const s = summarizeMinTdc(result)
+  if (!s) return null
   if (s.tone === "error")
     return (
       <Alert variant="destructive" className="mt-4">
@@ -678,17 +678,13 @@ function MinTdcRow({ result }: { result: MinTdcResult }) {
         </AlertDescription>
       </Alert>
     )
-  const Icon = { ok: ShieldCheck, neutral: Inbox, warning: ShieldQuestion }[s.tone]
+  const Icon = s.tone === "ok" ? ShieldCheck : ShieldQuestion
   return (
     <div className="mt-4 flex gap-3 rounded-lg border border-white/10 px-3 py-2.5 text-sm">
       <Icon
         className={cn(
           "mt-0.5 size-4 shrink-0",
-          s.tone === "ok"
-            ? "text-[var(--color-fg-brand)]"
-            : s.tone === "warning"
-              ? "text-[var(--color-fg-warning)]"
-              : "text-[var(--color-fg-base)]/50",
+          s.tone === "ok" ? "text-[var(--color-fg-brand)]" : "text-[var(--color-fg-warning)]",
         )}
         aria-hidden
       />

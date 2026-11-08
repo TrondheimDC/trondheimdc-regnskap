@@ -53,7 +53,7 @@ pnpm foring utlegg --mode create  # book it, after confirmation
 pnpm foring utlegg-history        # read-only: how utlegg were booked before
 ```
 
-Utleggsrapporter that Min TDC uploads to the Fiken inbox carry an Ed25519 signature over the PDF and the sender. The review shows "Fra Min TDC – verifisert" with the address, login and roles, a warning when the signature doesn't hold, and "Ikke fra Min TDC" when there is none. It only matters when such a report comes in; other reports work as before. It needs Min TDC's public key in `utlegg.minTdc.publicKey` in `regnskap.config.json` (see [docs/foring.md](docs/foring.md#fra-min-tdc)). It is information for the reviewer and doesn't change how a report is booked. `pnpm dev:mock` has a verified report (Ola Testesen) and one with a borrowed signature (Per Testesen).
+Utleggsrapporter that Min TDC uploads to the Fiken inbox carry an Ed25519 signature over the PDF and the sender. The review shows "Fra Min TDC – verifisert" with the address, login and roles, and a warning when the signature doesn't hold. Reports without a signature show nothing and work as before. It needs Min TDC's public key in `utlegg.minTdc.publicKey` in `regnskap.config.json` (see [docs/foring.md](docs/foring.md#fra-min-tdc)). It is information for the reviewer and doesn't change how a report is booked. `pnpm dev:mock` has a verified report (Ola Testesen) and one with a borrowed signature (Per Testesen).
 
 The token is stored in `~/.config/trondheimdc-regnskap/oauth-token.json`. Tests use a generated PDF (`test/pdf-fixture.ts`). Do not commit a real regnskapsbilag.
 

@@ -194,15 +194,18 @@ export function describeAttestation(a: ReportAttestation): string {
 }
 
 export interface MinTdcSummary {
-  tone: "ok" | "neutral" | "warning" | "error"
+  tone: "ok" | "warning" | "error"
   title: string
   detail: string
   /** What went wrong, for a failed check. */
   problems: string[]
 }
 
-/** The same words in the CLI and the web app. */
-export function summarizeMinTdc(result: MinTdcResult): MinTdcSummary {
+/**
+ * The same words in the CLI and the web app. Undefined for an unsigned report: most reports
+ * aren't from Min TDC, so only a signature is worth a mention.
+ */
+export function summarizeMinTdc(result: MinTdcResult): MinTdcSummary | undefined {
   switch (result.status) {
     case "verified":
       return {
@@ -212,12 +215,7 @@ export function summarizeMinTdc(result: MinTdcResult): MinTdcSummary {
         problems: [],
       }
     case "unsigned":
-      return {
-        tone: "neutral",
-        title: "Ikke fra Min TDC",
-        detail: "Ingen signatur. Sjekk avsenderen som for andre utlegg.",
-        problems: [],
-      }
+      return undefined
     case "no-key":
       return {
         tone: "warning",

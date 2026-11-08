@@ -807,14 +807,14 @@ function minTdcPublicKey(utlegg: UtleggConfig): string | undefined {
   return parsed.data
 }
 
-/** Min TDC's signature, for the reviewer. Information only: it never blocks or allows booking. */
+/**
+ * Min TDC's signature, for the reviewer: printed only when there is one. Information only: it
+ * never blocks or allows booking.
+ */
 function printMinTdc(result: MinTdcResult | undefined) {
-  if (!result) {
-    console.log("Min TDC: ikke sjekket (lokal fil, ingen beskrivelse fra innboksen)")
-    return
-  }
-  const s = summarizeMinTdc(result)
-  const mark = { ok: "✓", neutral: "·", warning: "!", error: "✗" }[s.tone]
+  const s = result && summarizeMinTdc(result)
+  if (!s) return
+  const mark = { ok: "✓", warning: "!", error: "✗" }[s.tone]
   console.log(`${mark} ${s.title}: ${s.detail}`)
   for (const p of s.problems) console.log(`    ✗ ${p}`)
 }

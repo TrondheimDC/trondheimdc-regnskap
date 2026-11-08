@@ -394,18 +394,17 @@ Min TDC · Sum 3 450,50 kr · mintdc1 year=2026 roles=speaker,crew email=kari@pr
 
 Rapporten er **verifisert fra Min TDC** når signaturen holder for PDF-en med Min TDCs offentlige nøkkel, og e-posten i PDF-en er `email` (uten hensyn til store og små bokstaver). Da er den like troverdig som en e-post fra den adressen, og personen er foredragsholder eller crew det året.
 
-Gjennomgangen (web-appen og `pnpm foring utlegg`) viser én av fire ting ved personen:
+Gjennomgangen (web-appen og `pnpm foring utlegg`) viser én av tre ting ved personen når rapporten har en signatur:
 
 | | |
 |---|---|
 | **Fra Min TDC – verifisert** | Adressen, innloggingen hvis den er en annen, og rollene og året, f.eks. «foredragsholder 2026». |
-| **Ikke fra Min TDC** | Ingen signatur. Vanlig for rapporter sendt på e-post eller fra utlegg.trondheimdc.no. Sjekk avsenderen som før. |
 | **Min TDC-signaturen stemmer ikke** | Signaturen holder ikke for denne PDF-en, er kuttet av, eller PDF-en har en annen e-post. Mulig forfalsket: behandle rapporten som ukjent avsender og sjekk med personen. |
 | **Signert av Min TDC, men ikke sjekket** | Oppskriften mangler nøkkelen. |
 
 Nøkkelen er `utlegg.minTdc.publicKey` i `regnskap.config.json`: Min TDCs offentlige nøkkel som base64 SPKI (`pnpm report-key` i trondheimdc-min skriver den ut). Bare den offentlige nøkkelen, aldri den private. CLI-en kan bruke en annen med `REPORT_SIGNING_PUBLIC_KEY`, f.eks. fra en Min TDC i utvikling. Koden er `src/lib/min-tdc.ts`.
 
-Uten signerte rapporter i innboksen merkes ingenting av dette: andre rapporter føres som før, bare med «Ikke fra Min TDC» ved personen. Signaturen er informasjon til den som fører. Den endrer ikke føringen, og den godkjenner ingenting av seg selv.
+Uten signatur vises ingenting, og rapporten føres som før. Det er det vanlige for rapporter sendt på e-post eller fra utlegg.trondheimdc.no. Signaturen er informasjon til den som fører. Den endrer ikke føringen, og den godkjenner ingenting av seg selv.
 
 ### Føringen
 

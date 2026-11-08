@@ -36,7 +36,7 @@ describe("Min TDC signature", () => {
     )
     const result = await check(description)
     expect(result).toEqual({ status: "verified", attestation: MIN_TDC_SENDER })
-    expect(summarizeMinTdc(result).title).toBe("Fra Min TDC – verifisert")
+    expect(summarizeMinTdc(result)?.title).toBe("Fra Min TDC – verifisert")
     expect(describeAttestation(MIN_TDC_SENDER)).toBe(
       "ola@example.com · innlogget som ola.testesen@example.org · foredragsholder 2030",
     )
@@ -83,7 +83,7 @@ describe("Min TDC signature", () => {
     ]) {
       const result = await check(forged)
       expect(result.status).toBe("failed")
-      expect(summarizeMinTdc(result).tone).toBe("error")
+      expect(summarizeMinTdc(result)?.tone).toBe("error")
     }
   })
 
@@ -127,9 +127,12 @@ describe("Min TDC signature", () => {
     expect((await check(`${description} · ${token.replace("2030", "2031")}`)).status).toBe("failed")
   })
 
-  test("no token is not from Min TDC", async () => {
-    for (const description of [undefined, "", "Min TDC · Sum 1 kr · ola@example.com"])
-      expect(await check(description)).toEqual({ status: "unsigned" })
+  test("no token is not from Min TDC, and nothing is shown", async () => {
+    for (const description of [undefined, "", "Min TDC · Sum 1 kr · ola@example.com"]) {
+      const result = await check(description)
+      expect(result).toEqual({ status: "unsigned" })
+      expect(summarizeMinTdc(result)).toBeUndefined()
+    }
   })
 
   test("a token without a configured key is shown as not checked", async () => {
