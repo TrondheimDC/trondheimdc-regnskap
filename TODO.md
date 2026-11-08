@@ -4,6 +4,8 @@ Open questions to verify on a Fiken test company (`testCompany: true`, with the 
 
 ## To verify
 
+- [ ] **Min TDC's signature on a real upload.** Put Min TDC's public key in `utlegg.minTdc.publicKey` (`pnpm report-key` in trondheimdc-min, production). Then open a report Min TDC uploaded to the inbox and check it shows "Fra Min TDC – verifisert". That also shows whether Fiken keeps the whole description: the API docs give no limit for an inbox document's description, but similar fields stop at 200 characters, and a cut-off signature shows as "stemmer ikke".
+
 - [ ] **Bank line ↔ our fri postering (the main question).** Book a month in the test company with `--mode create`, then import or type in the bank line for one payout on 1920:10001, and open *Annet → Superføring*.
   - Does Fiken suggest "Legg til som bilag" or a link to our posting by itself?
   - Is the suggestion still there when the posting is dated 1–3 days before the bank line (Checkin "Bokført" vs bank arrival)?

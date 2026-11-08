@@ -15,6 +15,12 @@ import type {
   SaleRequest,
 } from "@/lib/fiken"
 import { FIKEN_API_URL } from "@/lib/fiken"
+import {
+  MIN_TDC_REPORT,
+  MIN_TDC_SENDER,
+  minTdcDescription,
+  OTHER_REPORT,
+} from "../../test/min-tdc-fixture"
 import { HOTEL_INVOICE, MARCH_2026, UTLEGG_REPORT, UTLEGG_REPORT_V2 } from "../../test/pdf-fixture"
 
 const SLUG = config.companySlug ?? "trondheimdc"
@@ -81,6 +87,26 @@ function createState() {
         status: false,
         createdAt: "2030-11-07T10:00:00Z",
         documentUrl: `${FIKEN_API_URL}/companies/${SLUG}/inbox/7003/file`,
+      },
+      // Uploaded by Min TDC, signed with the test key (descriptions filled in by minTdcDocs).
+      {
+        documentId: 7004,
+        name: "Refusjon TDC 2030 – Ola Testesen (UT-20301107-M1N2)",
+        filename: "UT-20301107-M1N2-ola-testesen-expense-report.pdf",
+        description: "",
+        status: false,
+        createdAt: "2030-11-07T10:00:00Z",
+        documentUrl: `${FIKEN_API_URL}/companies/${SLUG}/inbox/7004/file`,
+      },
+      // Someone else's PDF with Ola's signature copied into the description: must not verify.
+      {
+        documentId: 7005,
+        name: "Refusjon TDC 2030 – Per Testesen (UT-20301108-X9Y8)",
+        filename: "UT-20301108-X9Y8-per-testesen-expense-report.pdf",
+        description: "",
+        status: false,
+        createdAt: "2030-11-08T10:00:00Z",
+        documentUrl: `${FIKEN_API_URL}/companies/${SLUG}/inbox/7005/file`,
       },
     ],
     ehf: [
@@ -159,6 +185,16 @@ function createState() {
 }
 
 let state = createState()
+
+/** Min TDC's descriptions: signing is async, so they are made once and filled in on listing. */
+const minTdcDocs: Promise<Record<number, string>> = minTdcDescription(
+  MIN_TDC_REPORT,
+  MIN_TDC_SENDER,
+  "3 450,00 kr",
+).then((signed) => ({
+  7004: signed,
+  7005: signed,
+}))
 
 /** Every account code in the recipe (and its ledger's base), plus the usual ones. */
 function chartOfAccounts() {
@@ -271,7 +307,9 @@ export const handlers = [
     return contact ? HttpResponse.json(contact) : notFound("contact")
   }),
 
-  http.get(`${C}/inbox`, ({ request }) => {
+  http.get(`${C}/inbox`, async ({ request }) => {
+    const descriptions = await minTdcDocs
+    for (const d of state.inbox) d.description = descriptions[d.documentId] ?? d.description
     const q = query(request)
     const name = q.get("name")?.toLowerCase()
     return HttpResponse.json(
@@ -285,11 +323,14 @@ export const handlers = [
   }),
   http.get(`${C}/inbox/:id/file`, ({ params }) =>
     pdf(
-      Number(params.id) === 7002
-        ? UTLEGG_REPORT
-        : Number(params.id) === 7003
-          ? UTLEGG_REPORT_V2
-          : MARCH_2026,
+      (
+        {
+          7002: UTLEGG_REPORT,
+          7003: UTLEGG_REPORT_V2,
+          7004: MIN_TDC_REPORT,
+          7005: OTHER_REPORT,
+        } as Record<number, Uint8Array>
+      )[Number(params.id)] ?? MARCH_2026,
     ),
   ),
   http.get(`${C}/ehf`, () => HttpResponse.json(state.ehf)),

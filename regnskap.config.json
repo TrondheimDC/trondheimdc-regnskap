@@ -152,6 +152,9 @@
     "$comment": "Utleggsrapporter fra utleggsskjemaet (én PDF per krav). Ett leverandørkjøp per krav med personen som leverandør, én linje per kvittering. Utlegg føres uten mva-fradrag, slik regnskapsfører har gjort (kvitteringen står på personen). Første regel som passer bestemmer kategorien; kategori, konto og mva-sats kan endres i gjennomgangen. «Støtte til meetups» er penger vi gir til en annen part (f.eks. en meetup-gruppes Meetup.com-abonnement), ikke foreningens egne abonnement.",
     "inboxName": "expense-report",
     "dueDays": 14,
+    "minTdc": {
+      "$comment": "Min TDC signerer utleggsrapportene den laster opp til innboksen. Med Min TDCs offentlige nøkkel (base64 SPKI, «pnpm report-key» i trondheimdc-min) viser gjennomgangen om rapporten er verifisert. Aldri den private nøkkelen. Legg den inn som \"publicKey\"."
+    },
     "categories": [
       {
         "id": "reise",

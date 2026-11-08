@@ -18,8 +18,10 @@ import type {
   OrderLine,
   ResultLine,
 } from "./fiken.ts"
+import { type MinTdcResult, verifyMinTdcReport } from "./min-tdc.ts"
 import {
   buildUtleggPlan,
+  parseUtleggPdf,
   type UtleggChoices,
   type UtleggPlan,
   type UtleggPlanLine,
@@ -33,6 +35,24 @@ export interface UtleggSource {
   doc?: InboxDocument
   /** Human-readable origin, e.g. a file name or an inbox document. */
   description: string
+  /** Whether Min TDC signed it; only for inbox documents. Shown to the reviewer, never decides anything. */
+  minTdc?: MinTdcResult
+}
+
+/**
+ * Reads the report, and for an inbox document checks Min TDC's signature in its description
+ * against the PDF exactly as downloaded. `publicKey` is Min TDC's (utlegg.minTdc.publicKey).
+ */
+export async function readUtleggSource(
+  pdf: Uint8Array,
+  origin: { doc: InboxDocument; publicKey: string | undefined } | { file: string },
+  description: string,
+): Promise<UtleggSource> {
+  const report = await parseUtleggPdf(pdf)
+  if ("file" in origin) return { report, description }
+  const { doc, publicKey } = origin
+  const minTdc = await verifyMinTdcReport({ description: doc.description, pdf, report, publicKey })
+  return { report, doc, description, minTdc }
 }
 
 export interface UtleggPrepared {

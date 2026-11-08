@@ -382,6 +382,31 @@ Kontoene kan byttes per faktura: web-appen har en nedtrekksliste med kontoene i 
 
 Mot Fiken: at hotellet finnes som leverandør, at kontoene finnes, at EHF-en finnes (for vedlegg), og at fakturaen ikke allerede er ført: et kjøp med fakturanummeret i referansen, et kjøpsutkast med det som fakturanummer, eller EHF-en bokført som kjøp i Fiken.
 
+### Fra Min TDC
+
+Foredragsholdere og crew kan sende utlegg gjennom Min TDC ([trondheimdc-min](https://github.com/TrondheimDC/trondheimdc-min)), som laster rapporten rett opp i innboksen. Alle kan legge en fil i innboksen (den tar imot e-post også), så teksten «Min TDC» i beskrivelsen beviser ingenting. Min TDC signerer derfor hver rapport, og signaturen står sist i beskrivelsen:
+
+```
+Min TDC · Sum 3 450,50 kr · mintdc1 year=2026 roles=speaker,crew email=kari@privat.no login=kari@jobb.no sig=…
+```
+
+`email` er adressen på rapporten, en adresse personen har bekreftet i Min TDC. `login` er adressen de logget inn med, den som står på TDCs lister (står bare der når den er en annen). `sig` er en Ed25519-signatur over PDF-ens SHA-256 og feltene. Hashen står ikke i beskrivelsen: vi regner den ut fra PDF-en vi laster ned, så en endret eller byttet PDF gir feil signatur. Rapport-ID, navn, summer og kontonummer står i PDF-en og dekkes dermed også.
+
+Rapporten er **verifisert fra Min TDC** når signaturen holder for PDF-en med Min TDCs offentlige nøkkel, og e-posten i PDF-en er `email` (uten hensyn til store og små bokstaver). Da er den like troverdig som en e-post fra den adressen, og personen er foredragsholder eller crew det året.
+
+Gjennomgangen (web-appen og `pnpm foring utlegg`) viser én av fire ting ved personen:
+
+| | |
+|---|---|
+| **Fra Min TDC – verifisert** | Adressen, innloggingen hvis den er en annen, og rollene og året, f.eks. «foredragsholder 2026». |
+| **Ikke fra Min TDC** | Ingen signatur. Vanlig for rapporter sendt på e-post eller fra utlegg.trondheimdc.no. Sjekk avsenderen som før. |
+| **Min TDC-signaturen stemmer ikke** | Signaturen holder ikke for denne PDF-en, er kuttet av, eller PDF-en har en annen e-post. Mulig forfalsket: behandle rapporten som ukjent avsender og sjekk med personen. |
+| **Signert av Min TDC, men ikke sjekket** | Oppskriften mangler nøkkelen. |
+
+Nøkkelen er `utlegg.minTdc.publicKey` i `regnskap.config.json`: Min TDCs offentlige nøkkel som base64 SPKI (`pnpm report-key` i trondheimdc-min skriver den ut). Bare den offentlige nøkkelen, aldri den private. CLI-en kan bruke en annen med `REPORT_SIGNING_PUBLIC_KEY`, f.eks. fra en Min TDC i utvikling. Koden er `src/lib/min-tdc.ts`.
+
+Signaturen er informasjon til den som fører. Den endrer ikke føringen, og den godkjenner ingenting av seg selv.
+
 ### Føringen
 
 Etter bekreftelse («Lag utkast» / «Bokfør», i CLI-en `j`/`ja`):

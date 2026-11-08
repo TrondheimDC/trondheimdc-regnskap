@@ -6,10 +6,14 @@ import {
   CircleCheck,
   FilePen,
   FileText,
+  Inbox,
   OctagonX,
   ReceiptText,
   RefreshCw,
   Shapes,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldQuestion,
   TriangleAlert,
   Undo2,
   UserRound,
@@ -29,21 +33,23 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
-import { config } from "@/lib/app-config"
+import { config, REPORT_PUBLIC_KEY } from "@/lib/app-config"
 import type { UtleggConfig, VatRate } from "@/lib/config"
 import type { Fiken, InboxDocument } from "@/lib/fiken"
 import { formatDay } from "@/lib/format"
 import { RATE_LABEL } from "@/lib/hotel"
 import { buildUtleggMarks } from "@/lib/marks"
+import { type MinTdcResult, summarizeMinTdc } from "@/lib/min-tdc"
 import { pdfPageCount, renderPdfPage } from "@/lib/pdf-render"
 import { formatMoney, formatNok } from "@/lib/plan"
 import { cn } from "@/lib/utils"
-import { parseUtleggPdf, type UtleggPlacement, type UtleggPlan } from "@/lib/utlegg"
+import type { UtleggPlacement, UtleggPlan } from "@/lib/utlegg"
 import {
   bookUtlegg,
   describeUpdate,
   inspectUtlegg,
   prepareUtlegg,
+  readUtleggSource,
   type UtleggFikenState,
   type UtleggPrepared,
   type UtleggSource,
@@ -57,12 +63,14 @@ async function analyze(client: Fiken, utlegg: UtleggConfig, selection: UtleggSel
     selection.kind === "utlegg"
       ? await client.downloadInboxDocument(selection.doc)
       : new Uint8Array(await selection.file.arrayBuffer())
-  const source: UtleggSource = {
-    report: await parseUtleggPdf(pdf),
-    doc: selection.kind === "utlegg" ? selection.doc : undefined,
-    description:
-      selection.kind === "utlegg" ? `Innboks ${selection.doc.documentId}` : selection.file.name,
-  }
+  const source: UtleggSource =
+    selection.kind === "utlegg"
+      ? await readUtleggSource(
+          pdf,
+          { doc: selection.doc, publicKey: REPORT_PUBLIC_KEY },
+          `Innboks ${selection.doc.documentId}`,
+        )
+      : await readUtleggSource(pdf, { file: selection.file.name }, selection.file.name)
   // Reference and date don't depend on the choices, so Fiken is asked once.
   const plan = prepareUtlegg(source, utlegg).plan
   const [fiken, preview, pageCount] = await Promise.all([
@@ -595,6 +603,7 @@ function PersonCard({ prepared, fiken }: { prepared: UtleggPrepared; fiken: Utle
         ) : null
       }
     >
+      {prepared.source.minTdc ? <MinTdcRow result={prepared.source.minTdc} /> : null}
       {found ? (
         <dl className="mt-4 grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
           <span />
@@ -641,6 +650,55 @@ function PersonCard({ prepared, fiken }: { prepared: UtleggPrepared; fiken: Utle
         </ul>
       ) : null}
     </Card>
+  )
+}
+
+/**
+ * Whether the report came through Min TDC, from the signature in the inbox description. For the
+ * reviewer only: booking works the same either way.
+ */
+function MinTdcRow({ result }: { result: MinTdcResult }) {
+  const s = summarizeMinTdc(result)
+  if (s.tone === "error")
+    return (
+      <Alert variant="destructive" className="mt-4">
+        <ShieldAlert aria-hidden />
+        <AlertTitle>{s.title}</AlertTitle>
+        <AlertDescription>
+          {s.problems.length === 1 ? (
+            <p>{s.problems[0]}</p>
+          ) : (
+            <ul className="list-disc space-y-1 pl-4">
+              {s.problems.map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+          )}
+          <p>{s.detail}</p>
+        </AlertDescription>
+      </Alert>
+    )
+  const Icon = { ok: ShieldCheck, neutral: Inbox, warning: ShieldQuestion }[s.tone]
+  return (
+    <div className="mt-4 flex gap-3 rounded-lg border border-white/10 px-3 py-2.5 text-sm">
+      <Icon
+        className={cn(
+          "mt-0.5 size-4 shrink-0",
+          s.tone === "ok"
+            ? "text-[var(--color-fg-brand)]"
+            : s.tone === "warning"
+              ? "text-[var(--color-fg-warning)]"
+              : "text-[var(--color-fg-base)]/50",
+        )}
+        aria-hidden
+      />
+      <span className="min-w-0">
+        <span className={cn("block leading-snug", s.tone === "ok" && "font-semibold")}>
+          {s.title}
+        </span>
+        <span className="mt-0.5 block break-words text-[var(--color-fg-base)]/60">{s.detail}</span>
+      </span>
+    </div>
   )
 }
 

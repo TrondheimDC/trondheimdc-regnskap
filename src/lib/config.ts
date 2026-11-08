@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { VatType } from "./fiken.ts"
+import { Ed25519PublicKey } from "./min-tdc.ts"
 
 const AccountCode = z
   .string()
@@ -161,6 +162,12 @@ const UtleggConfig = z
     dueDays: z.int().min(0).max(90).default(14),
     categories: z.array(UtleggCategory).min(1),
     rules: z.array(UtleggRule),
+    /**
+     * Reports Min TDC uploads to the inbox carry its signature. With Min TDC's public key (base64
+     * SPKI DER, `pnpm report-key` in trondheimdc-min) the review shows whether a report really came
+     * from there. Never the private key. Without it, signed reports show as not checked.
+     */
+    minTdc: z.object({ publicKey: Ed25519PublicKey.optional() }).optional(),
   })
   .superRefine((utlegg, ctx) => {
     const ids = new Set<string>()

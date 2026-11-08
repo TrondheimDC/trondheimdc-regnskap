@@ -48,13 +48,9 @@ import {
   listHotelInvoices,
   prepareHotel,
 } from "../lib/hotel-booking.ts"
+import { Ed25519PublicKey, type MinTdcResult, summarizeMinTdc } from "../lib/min-tdc.ts"
 import { formatMoney, formatMonthNo, formatNok } from "../lib/plan.ts"
-import {
-  parseRatesArg,
-  parseRowChoicesArg,
-  parseUtleggPdf,
-  type UtleggChoices,
-} from "../lib/utlegg.ts"
+import { parseRatesArg, parseRowChoicesArg, type UtleggChoices } from "../lib/utlegg.ts"
 import {
   bookUtlegg,
   describePerson,
@@ -62,6 +58,7 @@ import {
   inspectUtlegg,
   listUtleggDocuments,
   prepareUtlegg,
+  readUtleggSource as readUtleggPdf,
   type UtleggSource,
   utleggBlockers,
 } from "../lib/utlegg-booking.ts"
@@ -773,7 +770,7 @@ async function readUtleggSource(
   const file = args[0]
   if (file) {
     const data = await readFile(file).catch(() => fail(`File ${file} not found`))
-    return { report: await parseUtleggPdf(new Uint8Array(data)), description: file }
+    return readUtleggPdf(new Uint8Array(data), { file }, file)
   }
   if (!client) fail("Give a PDF file, or log in with `pnpm foring login` to read the inbox")
   let doc: InboxDocument | undefined
@@ -794,8 +791,32 @@ async function readUtleggSource(
       )
     doc = docs[0]!
   }
-  const report = await parseUtleggPdf(await client.downloadInboxDocument(doc))
-  return { report, doc, description: `Fiken-innboks ${doc.documentId} "${doc.name}"` }
+  return readUtleggPdf(
+    await client.downloadInboxDocument(doc),
+    { doc, publicKey: minTdcPublicKey(utlegg) },
+    `Fiken-innboks ${doc.documentId} "${doc.name}"`,
+  )
+}
+
+/** Min TDC's public key: REPORT_SIGNING_PUBLIC_KEY (e.g. a dev Min TDC's) wins over the recipe. */
+function minTdcPublicKey(utlegg: UtleggConfig): string | undefined {
+  const env = process.env.REPORT_SIGNING_PUBLIC_KEY?.trim()
+  if (!env) return utlegg.minTdc?.publicKey
+  const parsed = Ed25519PublicKey.safeParse(env)
+  if (!parsed.success) fail(`REPORT_SIGNING_PUBLIC_KEY: ${parsed.error.issues[0]?.message}`)
+  return parsed.data
+}
+
+/** Min TDC's signature, for the reviewer. Information only: it never blocks or allows booking. */
+function printMinTdc(result: MinTdcResult | undefined) {
+  if (!result) {
+    console.log("Min TDC: ikke sjekket (lokal fil, ingen beskrivelse fra innboksen)")
+    return
+  }
+  const s = summarizeMinTdc(result)
+  const mark = { ok: "✓", neutral: "·", warning: "!", error: "✗" }[s.tone]
+  console.log(`${mark} ${s.title}: ${s.detail}`)
+  for (const p of s.problems) console.log(`    ✗ ${p}`)
 }
 
 async function utleggClaim() {
@@ -820,6 +841,7 @@ async function utleggClaim() {
   console.log(`Utleggsrapport → Fiken (${mode})`)
   console.log(`Kilde: ${source.description}`)
   if (report.reportId) console.log(`Rapport ${report.reportId} (skjemaets format ${report.format})`)
+  printMinTdc(source.minTdc)
   console.log(
     `${report.name}, ${report.email ?? "uten e-post"}, ${report.bankAccount ? `konto ${report.bankAccount}` : report.iban ? `IBAN ${report.iban}` : "uten kontonummer"}, utbetaling i ${report.payoutCurrency}`,
   )
@@ -887,6 +909,8 @@ async function utleggClaim() {
   }
 
   const what = `${state.person?.status === "new" ? `Legg inn ${report.name} som leverandør og ` : state.person?.update ? `Legg inn ${describeUpdate(state.person.update).toLowerCase()} på ${report.name} og ` : ""}${mode === "draft" ? "lag kjøpsutkast" : "bokfør kjøpet"} på ${formatMoney(plan.gross, plan.currency)} i Fiken`
+  if (source.minTdc?.status === "failed")
+    warn("Min TDC-signaturen stemmer ikke (se over). Sjekk med personen før du fører.")
   if (!(await confirm(what, checksOk))) {
     console.log("Avbrutt, ingenting er skrevet til Fiken.")
     return
