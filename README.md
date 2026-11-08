@@ -15,37 +15,46 @@ It is a web app, live at https://regnskap.trondheimdc.no. Nothing is written to 
 
 Login is OAuth with PKCE in the browser. api.fiken.no has no CORS, so nginx (and `next dev`) proxies `/api/fiken`. The recipe is `regnskap.config.json`, built into the app.
 
-## Develop
+## Use
 
-### With Mise
+Open https://regnskap.trondheimdc.no (it works on a phone) and log in with Fiken. Only users added as *Godkjente brukere* on the Fiken app can log in, see [docs/deploy.md](docs/deploy.md#1-fiken-app-one-time).
 
-```bash
-mise install
-cp .env.example .env.local   # NEXT_PUBLIC_FIKEN_CLIENT_ID=...
-mise run install
-mise run dev
-```
+| Tab | What it books |
+|---|---|
+| **Utlegg** | Utleggsrapporter in the Fiken inbox. One supplier purchase from the person, unpaid, a line per receipt. |
+| **Checkin** | The monthly regnskapsbilag from the Fiken inbox. A sale, a purchase and a fri postering per payout. A month already booked opens as a check against the bilag instead. |
+| **Hotell** | The hotel's conference invoice (EHF). One supplier purchase split into categories. |
+| **Ad hoc** | Any of the above as a local PDF, picked or dropped on the page. |
 
-Open [http://localhost:3000](http://localhost:3000).
+Each review shows the numbers, the checks and where every number is in the PDF. You can move lines to another category or account before booking. «Lag utkast» makes drafts in Fiken, «Bokfør» books for real; both ask for confirmation first, and failed checks must be ticked off. The same month, invoice or report is never booked twice.
 
-**Tasks:** `mise run install` | `mise run dev` | `mise run build` | `mise run check`
-
-### Without Mise
-
-Install Node and pnpm.
-
-```bash
-pnpm install
-pnpm dev
-```
+How each flow books and what it checks: [docs/foring.md](docs/foring.md).
 
 ### Min TDC
 
-Utleggsrapporter that Min TDC uploads to the Fiken inbox carry an Ed25519 signature over the PDF and the sender. The review shows "Fra Min TDC – verifisert" with the address, login and roles, and a warning when the signature doesn't hold. Reports without a signature show nothing and work as before. It needs Min TDC's public key in `utlegg.minTdc.publicKey` in `regnskap.config.json` (see [docs/foring.md](docs/foring.md#fra-min-tdc)). It is information for the reviewer and doesn't change how a report is booked. `pnpm dev:mock` has a verified report (Ola Testesen) and one with a borrowed signature (Per Testesen).
+Utleggsrapporter that Min TDC uploads to the Fiken inbox carry an Ed25519 signature over the PDF and the sender. The review shows "Fra Min TDC – verifisert" with the address, login and roles, and a warning when the signature doesn't hold. Reports without a signature show nothing and work as before. It needs Min TDC's public key in `utlegg.minTdc.publicKey` in `regnskap.config.json` (see [docs/foring.md](docs/foring.md#fra-min-tdc)). It is information for the reviewer and doesn't change how a report is booked.
 
-### Tests
+## Develop
 
-`mise run check` runs Biome, tsc and Vitest. Tests use a generated PDF (`test/pdf-fixture.ts`). Do not commit a real regnskapsbilag.
+```bash
+mise install                 # Node + pnpm
+cp .env.example .env.local   # NEXT_PUBLIC_FIKEN_CLIENT_ID=...
+mise run install
+mise run dev                 # http://localhost:3000, proxies /api/fiken to Fiken
+```
+
+Without Mise, install Node and pnpm and run `pnpm install` and `pnpm dev`.
+
+`pnpm dev:mock` runs against an in-memory Fiken (MSW, `src/mocks`) with sample bilag, so you can click through every flow without a Fiken login. It has a Min TDC report that verifies (Ola Testesen) and one with a borrowed signature (Per Testesen).
+
+| Command | |
+|---|---|
+| `mise run check` | Biome, tsc and Vitest. Run before you commit. |
+| `mise run build` | Static export to `out/`. Needs `NEXT_PUBLIC_FIKEN_CLIENT_ID`. |
+
+Tests use generated PDFs (`test/pdf-fixture.ts`) and a fake Fiken client. The repo is public: never commit a real bilag, or names, amounts or account numbers from one.
+
+Every push to `main` deploys to production.
 
 ## Further reading
 

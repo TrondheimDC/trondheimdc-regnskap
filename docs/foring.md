@@ -21,7 +21,7 @@ Logikken ligger i `src/lib` (PDF-leser, oppskrift, kontroller, Fiken-klient).
 - **Fiken-API:** api.fiken.no støtter ikke CORS, så nginx videresender `/api/fiken/*` til API-et. Proxyen har ingen nøkler. Hver forespørsel bruker den innloggede brukerens eget token.
 - **Oppskriften:** ligger i `regnskap.config.json` og bygges inn i appen. En endring krever commit og deploy.
 
-Se [docs/deploy.md](docs/deploy.md) for oppsett av Fiken-app, GitHub, nginx og DNS.
+Se [deploy.md](deploy.md) for oppsett av Fiken-app, GitHub, nginx og DNS.
 
 ## Utvikling
 
@@ -29,7 +29,8 @@ Se [docs/deploy.md](docs/deploy.md) for oppsett av Fiken-app, GitHub, nginx og D
 mise install                       # Node + pnpm
 cp .env.example .env.local         # NEXT_PUBLIC_FIKEN_CLIENT_ID=...
 pnpm install
-pnpm dev                        # http://localhost:3000
+pnpm dev                           # http://localhost:3000
+pnpm dev:mock                      # mot en falsk Fiken i nettleseren, uten innlogging
 mise run check                     # lint, typecheck, test
 ```
 
