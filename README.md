@@ -28,6 +28,8 @@ Open https://regnskap.trondheimdc.no (it works on a phone) and log in with Fiken
 
 Each review shows the numbers, the checks and where every number is in the PDF. You can move lines to another category or account before booking. «Lag utkast» makes drafts in Fiken, «Bokfør» books for real; both ask for confirmation first, and failed checks must be ticked off. The same month, invoice or report is never booked twice.
 
+**Status:** booking works in production, and Fiken's bankavstemming matches the payouts to our fri posteringer on its own. What is still unverified is in [TODO.md](TODO.md).
+
 How each flow books and what it checks: [docs/foring.md](docs/foring.md).
 
 **Min TDC** (TBD): Min TDC isn't published yet. The review can already check a signature on reports it uploads, but no such reports exist and no key is set. See [docs/foring.md](docs/foring.md#fra-min-tdc).

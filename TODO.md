@@ -1,16 +1,20 @@
 # TODO
 
-Open questions to verify on a Fiken test company (`testCompany: true`, with the API module enabled) before the first real month is booked with fri posteringer. Findings from the public docs follow, with sources.
+What has been checked against the real Fiken, and what is still open. Items below were first written as questions for a Fiken test company (`testCompany: true`, with the API module enabled); findings from the public docs follow, with sources.
 
-## To verify
+## Verified
+
+Confirmed in production, 2026-11-08:
+
+- [x] **Booking works.** Bookings made with the web app work in the real Fiken.
+- [x] **Bank line ↔ our fri postering.** In Fiken's bankavstemming the bank lines are matched to our fri posteringer automatically, so reconciling a payout is about one click. No manual routine is needed. This was the main open question.
+
+Not covered by that: the open items below, in particular EUR utlegg (in the code, not run against live Fiken) and the date question under "Which date to use".
+
+## Still to verify
 
 - [ ] **Min TDC's signature on a real upload.** Only matters once Min TDC uploads a signed report; until then nothing changes. Put Min TDC's public key in `utlegg.minTdc.publicKey` (`pnpm report-key` in trondheimdc-min, production). Then open a report Min TDC uploaded to the inbox and check it shows "Fra Min TDC – verifisert". That also shows whether Fiken keeps the whole description: the API docs give no limit for an inbox document's description, but similar fields stop at 200 characters, and a cut-off signature shows as "stemmer ikke".
 
-- [ ] **Bank line ↔ our fri postering (the main question).** Book a month in the test company with «Bokfør», then import or type in the bank line for one payout on 1920:10001, and open *Annet → Superføring*.
-  - Does Fiken suggest "Legg til som bilag" or a link to our posting by itself?
-  - Is the suggestion still there when the posting is dated 1–3 days before the bank line (Checkin "Bokført" vs bank arrival)?
-  - If not, does *Alternativer → Finn eksisterende posteringslinje* find it? Check that the line then shows as "Bokført", and that *Avstem* gives a zero difference for the month.
-  - Write down the exact clicks for the README.
 - [ ] **Which date to use.** Fiken's guidance (see findings) is to date the bank side on the day the money *arrived in the bank*. We use Checkin's "Bokført" date.
   - Compare "Bokført" with the bank date for a few months of real payouts.
   - If they differ, decide between three options:
