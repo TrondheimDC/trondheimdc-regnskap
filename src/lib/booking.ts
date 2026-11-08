@@ -1,4 +1,4 @@
-// The monthly flow, shared by the CLI and the web app:
+// The monthly flow:
 //   prepare()      read report -> recipe lines -> checks against the report itself (offline)
 //   inspectFiken() read-only checks against Fiken: accounts, attachment, what is already there,
 //                  reconciliation

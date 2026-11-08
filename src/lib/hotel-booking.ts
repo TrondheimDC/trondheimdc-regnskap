@@ -1,4 +1,4 @@
-// The hotel invoice flow, shared by the CLI and the web app:
+// The hotel invoice flow:
 //   prepareHotel()   invoice -> categories -> purchase lines, and the checks (offline, pure)
 //   inspectHotel()   read-only: supplier, chart of accounts, the EHF, already in Fiken?
 //   hotelBlockers()  what stops booking with the current choices (pure, so moving a line in the

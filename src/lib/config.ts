@@ -6,7 +6,6 @@ const AccountCode = z
   .string()
   .regex(/^\d{4}(:\d{5})?$/, "Expected an account code like 3000 or 1920:10001")
 export const IsoDate = z.iso.date()
-export const Month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Expected YYYY-MM")
 
 const AccrualConfig = z.object({
   /** Balance account to accrue against, e.g. 2965 (sales) or 1749 (purchases). */
@@ -193,8 +192,8 @@ const Side = z.object({
 export const Config = z
   .object({
     /**
-     * Default Fiken company slug (see `pnpm foring companies`), used when the user has access to
-     * it. Otherwise the web app asks, and the CLI needs `--company`.
+     * Default Fiken company slug, used when the user has access to it. Otherwise the web app
+     * asks.
      */
     companySlug: z.string().min(1).optional(),
     /** Fiken account code for "Utenlandsk bankkonto / betalingstjeneste Checkin". */

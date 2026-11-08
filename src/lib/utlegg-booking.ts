@@ -1,4 +1,4 @@
-// The utlegg flow, shared by the CLI and the web app:
+// The utlegg flow:
 //   prepareUtlegg()   report -> categories and VAT -> purchase lines, and the checks (offline, pure)
 //   inspectUtlegg()   read-only: the person as supplier, chart of accounts, already in Fiken?
 //   utleggBlockers()  what stops booking with the current choices (pure)
@@ -446,8 +446,3 @@ export function describeUpdate(u: ContactUpdate): string {
     .join(" og ")
   return parts.charAt(0).toUpperCase() + parts.slice(1)
 }
-
-export const describePerson = (p: UtleggPerson) =>
-  p.status === "new"
-    ? `Ny leverandør: ${p.contact.name}${p.contact.email ? `, ${p.contact.email}` : ""}${p.contact.bankAccountNumber ? `, konto ${p.contact.bankAccountNumber}` : ""}`
-    : `Leverandør: ${p.contact.name} (${p.contact.supplierAccountCode ?? p.contact.contactId})${p.update ? `; legger inn ${describeUpdate(p.update).toLowerCase()}` : ""}`

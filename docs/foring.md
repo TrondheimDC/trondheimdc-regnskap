@@ -10,10 +10,9 @@ Fører Checkin-regnskapsbilaget i Fiken. Per måned blir det:
 
 Bilaget legges ved alle føringene. Før noe føres, kontrolleres alle tallene mot rapporten selv og mot Checkin-kontoen i Fiken.
 
-- **Web-app:** https://regnskap.trondheimdc.no fungerer på mobil. Logg inn med Fiken og velg bilaget fra innboksen. Gjennomgangen viser tallene og kontrollene, og hvert tall er markert i PDF-en. Avslutt med «Lag utkast» eller «Bokfør».
-- **CLI:** `pnpm foring report` gjør det samme fra terminalen.
+Det gjøres i web-appen på https://regnskap.trondheimdc.no, som fungerer på mobil. Logg inn med Fiken og velg bilaget fra innboksen. Gjennomgangen viser tallene og kontrollene, og hvert tall er markert i PDF-en. Avslutt med «Lag utkast» eller «Bokfør».
 
-Begge bruker den samme koden i `src/lib` (PDF-leser, oppskrift, kontroller, Fiken-klient).
+Logikken ligger i `src/lib` (PDF-leser, oppskrift, kontroller, Fiken-klient).
 
 ## Arkitektur
 
@@ -38,16 +37,6 @@ Testene i `test/` bruker en generert PDF (`test/pdf-fixture.ts`) og en falsk Fik
 
 Verktøyet er skrevet i TypeScript og bruker [zod](https://zod.dev) til validering og [unpdf](https://github.com/unjs/unpdf) (pdf.js) til å lese PDF-en. PDF-en leses i nettleseren.
 
-### CLI
-
-```sh
-pnpm foring login                   # OAuth i nettleseren (samme Fiken-app, redirect http://127.0.0.1:8723/callback)
-pnpm foring report                  # dry-run: henter bilaget fra innboksen og kontrollerer
-pnpm foring report --mode create    # fører, etter bekreftelse
-```
-
-Tokenet lagres i `~/.config/trondheimdc-regnskap/oauth-token.json` (kun lesbart for deg) og fornyes automatisk. Hvis `FIKEN_API_TOKEN` (personlig API-nøkkel) er satt, brukes den i stedet.
-
 ## Flyten
 
 Checkin sender regnskapsbilaget som PDF til Fiken-innboksen. Verktøyet henter PDF-en derfra, leser tallene og fører dem. Det går gjennom de samme stegene hver gang:
@@ -70,43 +59,23 @@ Checkin sender regnskapsbilaget som PDF til Fiken-innboksen. Verktøyet henter P
    - hvilke utbetalinger som allerede er flyttet til banken i Fiken (se [Utbetalinger](#utbetalinger-fri-posteringer)).
 
    Deretter **avstemmes Checkin-kontoen** i Fiken (`checkinAccount`, f.eks. 1960:10001) mot rapporten, se under.
-4. **Spør** før noe skrives. I web-appen bekrefter du i en dialog. Hvis noen kontroller feilet, må du først krysse av for at du har sett avvikene. I CLI-en svarer du `j`, eller `ja` hvis noe feilet.
+4. **Spør** før noe skrives. I web-appen bekrefter du i en dialog. Hvis noen kontroller feilet, må du først krysse av for at du har sett avvikene.
 5. **Fører** salget og kjøpet, og én fri postering per utbetaling som ikke allerede finnes. PDF-en legges ved alt, og linjene periodiseres hvis det er konfigurert.
 
-Det finnes tre moduser. I web-appen er dry-run selve gjennomgangen, og knappene er «Lag utkast» og «Bokfør».
+Gjennomgangen skriver ingenting. Etter den er det to valg:
 
-- **`--mode dry-run`** (standard): stopper etter steg 3 og skriver ingenting.
-- **`--mode draft`**: lager salgs- og kjøpsutkast i Fiken med vedlegg.
+- **«Lag utkast»**: lager salgs- og kjøpsutkast i Fiken med vedlegg.
   - Fiken har ingen utkast for fri postering. Utbetalingene føres derfor som *åpne* fri posteringer, som kan slettes uten motpostering.
   - Hvis periodisering er konfigurert, må den gjøres manuelt når utkastet bokføres, fordi utkast ikke kan periodiseres via API-et.
-- **`--mode create`**: fører alt ferdig.
+- **«Bokfør»**: fører alt ferdig.
 
-CLI:
-
-```sh
-pnpm foring report                              # henter "Regnskapsbilag …" fra Fiken-innboksen
-pnpm foring report --month 2026-03              # velg måned hvis flere bilag ligger i innboksen
-pnpm foring report --inbox-doc 12345            # eller velg dokumentet direkte (se `pnpm foring inbox`)
-pnpm foring report --mode create
-
-pnpm foring report regnskapsbilag-mars-2026.pdf # lokal PDF
-pnpm foring report --month 2026-03 --amounts "3000=49380,4300=1234.40,4335=1512.38"  # nødløsning
-```
-
-Med `--amounts` finnes ingen utbetalingsoversikt, så da føres ingen fri posteringer.
-
-`--yes` hopper over spørsmålet i steg 4, men bare hvis alle kontroller er ok.
+Bilaget velges fra innboksen på forsiden. Et bilag som ligger lokalt, åpnes under «Ad hoc».
 
 Salget og kjøpet får referansen `Checkin YYYY-MM`. Verktøyet nekter å føre samme måned to ganger.
 
 ### Føre deler av måneden
 
-Salg, kjøp og utbetalinger kan føres hver for seg. I web-appen fjerner du haken under «Dette føres» for det du vil føre senere. I CLI-en bruker du `--only`:
-
-```sh
-pnpm foring report --mode create --only salg,kjop      # utbetalingene føres senere
-pnpm foring report --mode create --only utbetalinger
-```
+Salg, kjøp og utbetalinger kan føres hver for seg. Fjern haken under «Dette føres» for det du vil føre senere.
 
 Det som allerede ligger i Fiken, bokført eller som utkast, hoppes over og kan ikke velges. Slik retter du et feil bilag: annuller det i Fiken, åpne bilaget igjen og før bare det som mangler. Kontrollene regner med hele måneden, også det som føres senere.
 
@@ -119,13 +88,6 @@ Kontrollen finner månedens salg og kjøp i Fiken. Det er dem med referansen `Ch
 - **Linjene:** netto og mva per konto og mva-type i Fiken mot bilaget. Mangler, dobbeltføringer og feil konto eller mva gir avvik. Mva kan avvike med inntil 1 kr på grunn av avrunding.
 - **Utbetalingene:** hver utbetaling i bilaget skal være flyttet til banken, på samme måte som under [Utbetalinger](#utbetalinger-fri-posteringer).
 - **Checkin-kontoen:** det som er flyttet ut i måneden, utenom salget og kjøpet, mot det Checkin har utbetalt, og saldoen ved månedsslutt mot det Checkin holder for oss. Et saldoavvik kan stamme fra en tidligere måned.
-
-```sh
-pnpm foring check --month 2026-03     # bilaget hentes fra innboksen, også førte
-pnpm foring check bilag-mars.pdf      # eller fra en lokal PDF
-```
-
-`check` avslutter med feilkode 1 hvis noe avviker.
 
 En måned som er ført med mva regnet av Fiken, er noen øre feil. Den kan rettes herfra, se [Rette eldre måneder](#rette-eldre-måneder).
 
@@ -184,7 +146,7 @@ Hvis Checkin er satt som kunde på salget og leverandør på kjøpet, havner fø
 
 - **Salg:** med kunde føres det fortsatt som *Annet salg*, betalt til Checkin-kontoen, men knyttet til kunden.
 - **Kjøp:** med leverandør blir det et leverandørkjøp (`kind: "supplier"`), betalt med en gang fra Checkin-kontoen.
-- **Finne riktig kontakt:** `pnpm foring contacts checkin` viser kontakt-ID, org.nr. og reskontrokontoer. Checkin AS har org.nr. 994 035 053. Noen gebyrer kommer fra CheckinPay AS (se side 3 i bilaget).
+- **Finne riktig kontakt:** søk opp Checkin under *Kontakter* i Fiken. Kontakt-ID-en står i adressen til kontakten. Checkin AS har org.nr. 994 035 053. Noen gebyrer kommer fra CheckinPay AS (se side 3 i bilaget).
 - **Kontroll:** verktøyet sjekker at kontakten finnes og har riktig rolle, og stopper hvis ikke.
 
 ## Checkins rapporter og kontoplan
@@ -263,7 +225,7 @@ Netto og mva i Fiken kan avvike noen øre fra Checkins bilag. Summen inkl. mva e
 Alternativet, å føre Checkins netto og la Fiken regne 25 %, gir riktig netto men feil sum, og da stemmer ikke Checkin-kontoen mot bilaget.
 
 **Hvor det vises.**
-- Gjennomgangen og CLI-en viser en kort «Øreavrunding»-linje: vår mva mot Checkins.
+- Gjennomgangen viser en kort «Øreavrunding»-linje: vår mva mot Checkins.
 - I Fiken får linjen teksten `Checkin gebyr (øreavrunding, mva hos Checkin 308,65 kr)`, så bilaget selv forklarer avviket mot vedlegget.
 
 **Grenser.** Det gjøres bare når avviket er under 1 kr og det er én linje med den mva-typen. Større avvik blir stående og fanges av kontrollene. Mva-kontrollen feiler hvis avrundingen havner i Skatteetatens disfavør: mindre utgående mva enn billettene viser, eller mer inngående mva enn Checkin fakturerte. Det er noen øre; vurder om du vil føre likevel.
@@ -281,8 +243,7 @@ Måneder som er ført før dette, med Checkins netto og mva regnet av Fiken, har
 | Dato | Siste dag i måneden |
 | Tekst | `Øreavrunding Checkin 2026-03: ført med mva regnet av Fiken, …` med begge summene |
 
-- **Web-app:** åpne den førte måneden. Kortet «Øreavrunding» viser posteringen. Trykk «Før øreavrunding» og bekreft.
-- **CLI:** `pnpm foring check --month 2026-03` viser forslaget, og `--mode create` fører det etter bekreftelse.
+Åpne den førte måneden i web-appen. Kortet «Øreavrunding» viser posteringen. Trykk «Før øreavrunding» og bekreft.
 
 Mva rettes ikke. Mva-meldingene for de terminene er sendt, og avviket er noen øre per måned. Hver måned rettes for seg, så rekkefølgen spiller ingen rolle. Når en måned er rettet, foreslås det ikke igjen, fordi kontrollen regner med alle posteringer mellom Checkin-kontoen og avrundingskontoen i måneden, også de som er ført for hånd. Forslaget gis bare når avviket er under 1 kr og både salget og kjøpet er funnet. Større avvik er en feil linje, ikke avrunding.
 
@@ -302,7 +263,7 @@ Før noe føres, henter verktøyet saldoen på kontoen fra Fiken ved slutten av 
    Et avvik betyr som regel at noe annet er ført på Checkin-kontoen. Det kan også bety at en utbetaling allerede er ført med feil beløp, eller datert i neste måned.
 2. **Saldo (valgfritt).** Hvis `reconcile.balanceAccounts` er satt, sammenlignes saldoen på kontoen etter føring med utgående saldo på de kontoene i Checkin-rapporten, altså det Checkin holder for oss. Saldoen etter føring er saldoen i Fiken pluss salget, minus kjøpet og de nye utbetalingene.
 
-Etter `--mode create` hentes saldoen på nytt for å bekrefte at Fiken har ført det som var planlagt.
+Etter «Bokfør» hentes saldoen på nytt for å bekrefte at Fiken har ført det som var planlagt.
 
 ```json
 "reconcile": { "payoutAccounts": ["1920"], "balanceAccounts": ["1500", "1921"], "outputVat": { "HIGH": "2701" }, "inputVat": { "HIGH": "2711" } }
@@ -335,8 +296,7 @@ Periodisering er valgfritt og står av i eksempelkonfigurasjonen. For å slå de
 
 Konferansefakturaen fra hotellet (Hotel Brattøra AS, org.nr. 995 857 480, Clarion Hotel Trondheim) føres som **ett leverandørkjøp** med én linje per kategori og mva-sats. Oppskriften står under `hotel` i `regnskap.config.json`.
 
-- **Web-app:** forsiden viser hotellets EHF-fakturaer under «Hotellfaktura». En lokal PDF som er hotellfakturaen åpnes også her, og EHF-en med samme fakturanummer legges ved.
-- **CLI:** `pnpm foring hotell` henter hotellets ubehandlede EHF fra Fiken. Se under.
+Forsiden i web-appen viser hotellets EHF-fakturaer under «Hotellfaktura». En lokal PDF som er hotellfakturaen åpnes også, og EHF-en med samme fakturanummer legges ved.
 
 ### Hva som leses
 
@@ -359,13 +319,13 @@ Fakturaen må ha tekstlag (den skannede proformaen fra 2025 støttes ikke).
 | Hotellrom | 7140 | rom 12 % med fradrag, frokost 25 % uten | Stay |
 | Fakturagebyr | 7770 | 12 %, fradrag | Fees |
 
-Kontoene kan byttes per faktura: web-appen har en nedtrekksliste med kontoene i Fiken (4000–8999), CLI-en `--account crew=5990`. Endres de for godt, endre `account` i oppskriften.
+Kontoene kan byttes per faktura: gjennomgangen har en nedtrekksliste med kontoene i Fiken (4000–8999). Endres de for godt, endre `account` i oppskriften.
 
 **Linjer uten fradrag** føres med bruttobeløpet og mva-type `NONE` (ingen mva-behandling). Fiken-API-et har ingen innenlandsk «uten fradrag»-type for kjøp. Se [TODO.md](../TODO.md).
 
 **Reglene** i `hotel.rules` foreslår kategori per linje; første regel som passer gjelder. En regel kan kreve seksjon, mva-sats, tekst (regex), at en linje i samme regning passer `billText` (f.eks. øl eller vin gjør hele regningen til festen), og `minCount`/`maxCount` for antall. Samme vare kan høre hjemme flere steder (brus til deltakerne eller til crew), så forslaget må ses over. Brus og vann i POS - Banquet foreslås etter antall: 100 stk. eller mer blir servering, færre blir crew. Andre varer der, og seksjoner reglene ikke kjenner (f.eks. «POS - Bar»), får ingen kategori.
 
-- **Flytt** en hel regning eller én linje til en annen kategori. Web: nedtrekkslisten ved regningen eller linjen. CLI: `--move NO121S0000033=servering,#57=crew` (`#57` er linjenummeret CLI-en skriver ut).
+- **Flytt** en hel regning eller én linje til en annen kategori. Bruk nedtrekkslisten ved regningen eller linjen.
 - **Uplasserte linjer stopper føringen.** De havner aldri et sted i stillhet.
 
 ### Kontrollene
@@ -394,7 +354,7 @@ Min TDC · Sum 3 450,50 kr · mintdc1 year=2026 roles=speaker,crew email=kari@pr
 
 Rapporten er **verifisert fra Min TDC** når signaturen holder for PDF-en med Min TDCs offentlige nøkkel, og e-posten i PDF-en er `email` (uten hensyn til store og små bokstaver). Da er den like troverdig som en e-post fra den adressen, og personen er foredragsholder eller crew det året.
 
-Gjennomgangen (web-appen og `pnpm foring utlegg`) viser én av tre ting ved personen når rapporten har en signatur:
+Gjennomgangen viser én av tre ting ved personen når rapporten har en signatur:
 
 | | |
 |---|---|
@@ -402,13 +362,13 @@ Gjennomgangen (web-appen og `pnpm foring utlegg`) viser én av tre ting ved pers
 | **Min TDC-signaturen stemmer ikke** | Signaturen holder ikke for denne PDF-en, er kuttet av, eller PDF-en har en annen e-post. Mulig forfalsket: behandle rapporten som ukjent avsender og sjekk med personen. |
 | **Signert av Min TDC, men ikke sjekket** | Oppskriften mangler nøkkelen. |
 
-Nøkkelen er `utlegg.minTdc.publicKey` i `regnskap.config.json`: Min TDCs offentlige nøkkel som base64 SPKI (`pnpm report-key` i trondheimdc-min skriver den ut). Bare den offentlige nøkkelen, aldri den private. CLI-en kan bruke en annen med `REPORT_SIGNING_PUBLIC_KEY`, f.eks. fra en Min TDC i utvikling. Koden er `src/lib/min-tdc.ts`.
+Nøkkelen er `utlegg.minTdc.publicKey` i `regnskap.config.json`: Min TDCs offentlige nøkkel som base64 SPKI (`pnpm report-key` i trondheimdc-min skriver den ut). Bare den offentlige nøkkelen, aldri den private. Koden er `src/lib/min-tdc.ts`.
 
 Uten signatur vises ingenting, og rapporten føres som før. Det er det vanlige for rapporter sendt på e-post eller fra utlegg.trondheimdc.no. Signaturen er informasjon til den som fører. Den endrer ikke føringen, og den godkjenner ingenting av seg selv.
 
 ### Føringen
 
-Etter bekreftelse («Lag utkast» / «Bokfør», i CLI-en `j`/`ja`):
+Etter bekreftelse («Lag utkast» / «Bokfør»):
 
 | | |
 |---|---|
@@ -419,22 +379,11 @@ Etter bekreftelse («Lag utkast» / «Bokfør», i CLI-en `j`/`ja`):
 
 Betalingen føres ikke av verktøyet. Den kobles til kjøpet i Fiken når den kommer på banken.
 
-```sh
-pnpm foring hotell                                  # dry-run: hotellets ubehandlede EHF fra Fiken
-pnpm foring hotell --ehf 123                        # velg EHF hvis det er flere
-pnpm foring hotell faktura.pdf                      # lokal PDF; EHF-en med samme nummer legges ved
-pnpm foring hotell --move NO121S0000033=servering   # flytt en regning
-pnpm foring hotell --account lokaler=4590           # annen konto for en kategori
-pnpm foring hotell --mode create                    # fører, etter bekreftelse
-pnpm foring chart                                   # kontoplanen i Fiken (4000–8999)
-```
-
 ## Utlegg
 
 En utleggsrapport fra utleggsskjemaet ([trondheimdc-utlegg](https://github.com/TrondheimDC/trondheimdc-utlegg)) føres som **ett leverandørkjøp** med personen som leverandør og én linje per kvittering. Økonomiansvarlig betaler kjøpet fra Fiken, og betalingen kobles i bankavstemmingen. Oppskriften står under `utlegg` i `regnskap.config.json`.
 
-- **Web-app:** forsiden viser utleggsrapportene i innboksen under «Utlegg». En lokal PDF som er en utleggsrapport åpnes også her.
-- **CLI:** `pnpm foring utlegg` henter rapporten fra innboksen. Se under.
+Forsiden i web-appen viser utleggsrapportene i innboksen under «Utlegg». En lokal PDF som er en utleggsrapport åpnes også.
 
 ### Hva som leses
 
@@ -475,16 +424,3 @@ Mot Fiken: personen finnes som leverandør (på e-post, ellers på navn), konton
 | Referanse | `Utlegg <rapport-ID> <navn>` (format 1: `Utlegg <dato> <navn>`) |
 | Valuta | Utbetalingsvalutaen. Et krav i EUR føres i EUR, og Fiken regner om til NOK. Et IBAN lagres ikke på kontakten; det står i rapporten. |
 | Vedlegg | Utleggsrapporten |
-
-```sh
-pnpm foring utlegg                         # dry-run: rapporten i innboksen
-pnpm foring utlegg --inbox-doc 123         # velg dokumentet hvis det er flere
-pnpm foring utlegg rapport.pdf             # lokal PDF
-pnpm foring utlegg --category "#2=utstyr"  # flytt en kvittering
-pnpm foring utlegg --rate "#3=12"          # velg mva-sats
-pnpm foring utlegg --account reise=7140    # annen konto for en kategori
-pnpm foring utlegg --mode create           # fører, etter bekreftelse
-pnpm foring utlegg-history 2026            # bare lesing: hvordan utlegg er ført i Fiken før
-```
-
-Uten nettleserinnlogging kan CLI-en bruke en personlig API-nøkkel: sett `FIKEN_API_TOKEN` i `.env.local`. CLI-en leser `.env.local` og `.env`.

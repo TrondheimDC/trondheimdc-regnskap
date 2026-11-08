@@ -301,7 +301,7 @@ export interface Rounding {
   booked: { net: number; vat: number }
 }
 
-/** Short note for the review screen and CLI. */
+/** Short note for the review screen. */
 export function explainRounding(r: Rounding): string {
   return `${r.description}: mva ${formatNok(r.booked.vat)}, Checkin ${formatNok(r.checkin.vat)}. Sum inkl. mva er lik.`
 }

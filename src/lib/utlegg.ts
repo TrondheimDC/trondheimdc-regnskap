@@ -667,29 +667,6 @@ export function buildUtleggPlan(
   }
 }
 
-/** "#2=materiell,#3=reise" -> { "#2": "materiell", ... } */
-export function parseRowChoicesArg(arg: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const part of arg.split(",")) {
-    const m = /^#?(\d+)=(.+)$/.exec(part.trim())
-    if (!m) throw new Error(`Invalid choice "${part}", expected e.g. #2=materiell`)
-    out[`#${m[1]}`] = m[2]!.trim()
-  }
-  return out
-}
-
-/** "#2=25,#3=0" -> rates per receipt. */
-export function parseRatesArg(arg: string): Record<string, VatRate> {
-  const out: Record<string, VatRate> = {}
-  for (const [key, value] of Object.entries(parseRowChoicesArg(arg))) {
-    const rate = Number(value.replace(/\s*%$/, ""))
-    if (!VAT_RATES.includes(rate as VatRate))
-      throw new Error(`Invalid VAT rate "${value}" for ${key}, expected 25, 15, 12 or 0`)
-    out[key] = rate as VatRate
-  }
-  return out
-}
-
 /** Two-month VAT terms (mva-terminer): 1 = Jan–Feb … 6 = Nov–Dec. */
 export function vatTerm(date: string): string {
   return `${date.slice(0, 4)}-${Math.ceil(Number(date.slice(5, 7)) / 2)}`

@@ -332,19 +332,6 @@ export async function parseReportPdf(data: Uint8Array): Promise<ParsedReport> {
   return { ...report, month, text }
 }
 
-/** "3000=427521.63,4300=5163.44" -> movements (positive numbers, natural direction). */
-export function parseAmountsArg(arg: string): Movements {
-  const movements: Movements = new Map()
-  for (const part of arg.split(/[,;]\s*(?=\d{4}=)/)) {
-    const m = /^(\d{4})=(.+)$/.exec(part.trim())
-    const amount = m ? parseAmount(m[2]!) : undefined
-    if (!m || amount === undefined)
-      throw new Error(`Invalid amount "${part}", expected e.g. 3000=427521.63`)
-    movements.set(m[1]!, amount)
-  }
-  return movements
-}
-
 /**
  * Builds the Fiken lines from the recipe in the config. Checkin account numbers are only
  * used to find the amounts; every line is booked on our own Fiken account. Any amount in

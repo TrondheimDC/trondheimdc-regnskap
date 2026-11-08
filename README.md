@@ -2,7 +2,7 @@
 
 Books Checkin's monthly accounting report in Fiken: one sale (ticket revenue), one purchase (Checkin fees), and one fri postering per payout to the bank. Also books the hotel's conference invoice as one supplier purchase, split into categories. And books utleggsrapporter (expense claims) from the utlegg form as one supplier purchase from the person, a line per receipt.
 
-The web app and `pnpm foring` share `src/lib`. Nothing is written to Fiken until the numbers have been checked and you confirm.
+It is a web app, live at https://regnskap.trondheimdc.no. Nothing is written to Fiken until the numbers have been checked and you confirm.
 
 ![Gjennomgang av et regnskapsbilag](docs/screenshot.png)
 
@@ -39,23 +39,13 @@ pnpm install
 pnpm dev
 ```
 
-### CLI
-
-```bash
-pnpm foring login                 # OAuth in the browser
-pnpm foring report                # dry-run: read the inbox bilag and check it
-pnpm foring report --mode create  # book, after confirmation
-pnpm foring check --month 2026-03 # check a booked month against its bilag
-pnpm foring hotell                # dry-run: the hotel's conference invoice (EHF) from Fiken
-pnpm foring hotell --mode create  # book it, after confirmation
-pnpm foring utlegg                # dry-run: an utleggsrapport from the inbox
-pnpm foring utlegg --mode create  # book it, after confirmation
-pnpm foring utlegg-history        # read-only: how utlegg were booked before
-```
+### Min TDC
 
 Utleggsrapporter that Min TDC uploads to the Fiken inbox carry an Ed25519 signature over the PDF and the sender. The review shows "Fra Min TDC – verifisert" with the address, login and roles, and a warning when the signature doesn't hold. Reports without a signature show nothing and work as before. It needs Min TDC's public key in `utlegg.minTdc.publicKey` in `regnskap.config.json` (see [docs/foring.md](docs/foring.md#fra-min-tdc)). It is information for the reviewer and doesn't change how a report is booked. `pnpm dev:mock` has a verified report (Ola Testesen) and one with a borrowed signature (Per Testesen).
 
-The token is stored in `~/.config/trondheimdc-regnskap/oauth-token.json`. Tests use a generated PDF (`test/pdf-fixture.ts`). Do not commit a real regnskapsbilag.
+### Tests
+
+`mise run check` runs Biome, tsc and Vitest. Tests use a generated PDF (`test/pdf-fixture.ts`). Do not commit a real regnskapsbilag.
 
 ## Further reading
 

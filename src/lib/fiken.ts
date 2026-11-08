@@ -2,7 +2,7 @@
 // All amounts are integers in øre. Fiken only allows one concurrent request and
 // slows down above ~4 req/s, so every call goes through a serial queue.
 
-/** The real API. In the browser we go through a same-origin proxy instead, since api.fiken.no has no CORS. */
+/** The real API. The app goes through a same-origin proxy instead, since api.fiken.no has no CORS. */
 export const FIKEN_API_URL = "https://api.fiken.no/api/v2"
 const MIN_INTERVAL_MS = 300
 
@@ -11,7 +11,7 @@ import { z } from "zod"
 export interface Auth {
   /** Current bearer token, refreshing it first if it is about to expire. */
   token(): Promise<string>
-  /** Called after a 401; returns false if there is nothing to refresh (personal token). */
+  /** Called after a 401; returns false if there is nothing to refresh. */
   refresh(): Promise<boolean>
 }
 

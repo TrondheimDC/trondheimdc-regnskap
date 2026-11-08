@@ -14,14 +14,7 @@ import type {
   PurchaseRequest,
   PurchaseResult,
 } from "../src/lib/fiken.ts"
-import {
-  buildUtleggPlan,
-  parseRatesArg,
-  parseRowChoicesArg,
-  parseUtleggPdf,
-  receiptRates,
-  vatTerm,
-} from "../src/lib/utlegg.ts"
+import { buildUtleggPlan, parseUtleggPdf, receiptRates, vatTerm } from "../src/lib/utlegg.ts"
 import {
   bookUtlegg,
   inspectUtlegg,
@@ -262,15 +255,6 @@ describe("the purchase", () => {
     const p = buildUtleggPlan(r, utlegg)
     expect(p.lines).toEqual([])
     expect(p.unplaced.map((u) => u.row.n)).toEqual([1])
-  })
-
-  test("parses choices from the command line", () => {
-    expect(parseRowChoicesArg("#2=materiell, 3=reise")).toEqual({
-      "#2": "materiell",
-      "#3": "reise",
-    })
-    expect(parseRatesArg("#1=25,#2=0 %")).toEqual({ "#1": 25, "#2": 0 })
-    expect(() => parseRatesArg("#1=8")).toThrow()
   })
 })
 

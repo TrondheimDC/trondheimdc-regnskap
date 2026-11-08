@@ -6,7 +6,7 @@ Open questions to verify on a Fiken test company (`testCompany: true`, with the 
 
 - [ ] **Min TDC's signature on a real upload.** Only matters once Min TDC uploads a signed report; until then nothing changes. Put Min TDC's public key in `utlegg.minTdc.publicKey` (`pnpm report-key` in trondheimdc-min, production). Then open a report Min TDC uploaded to the inbox and check it shows "Fra Min TDC – verifisert". That also shows whether Fiken keeps the whole description: the API docs give no limit for an inbox document's description, but similar fields stop at 200 characters, and a cut-off signature shows as "stemmer ikke".
 
-- [ ] **Bank line ↔ our fri postering (the main question).** Book a month in the test company with `--mode create`, then import or type in the bank line for one payout on 1920:10001, and open *Annet → Superføring*.
+- [ ] **Bank line ↔ our fri postering (the main question).** Book a month in the test company with «Bokfør», then import or type in the bank line for one payout on 1920:10001, and open *Annet → Superføring*.
   - Does Fiken suggest "Legg til som bilag" or a link to our posting by itself?
   - Is the suggestion still there when the posting is dated 1–3 days before the bank line (Checkin "Bokført" vs bank arrival)?
   - If not, does *Alternativer → Finn eksisterende posteringslinje* find it? Check that the line then shows as "Bokført", and that *Avstem* gives a zero difference for the month.
@@ -23,7 +23,7 @@ Open questions to verify on a Fiken test company (`testCompany: true`, with the 
   - In the test company, check how the double booking shows up. Both our balance check and Fiken's bankavstemming should flag it.
   - The reverse order is handled: if the superføring is made first, the tool finds it by amount and date and skips that payout.
 - [ ] **Open entries (draft mode).**
-  - Do `open: true` entries show up in `GET /journalEntries`? The tool relies on this to skip them on a later `--mode create`.
+  - Do `open: true` entries show up in `GET /journalEntries`? The tool relies on this to skip them when the month is booked again.
   - Do they count in `accountBalances`?
   - Can they be linked in Superføring?
   - How are they closed (finalised) in the UI?
@@ -41,18 +41,18 @@ Open questions to verify on a Fiken test company (`testCompany: true`, with the 
 - [ ] **Supplier purchase paid immediately.**
   - Check that `kind: "supplier"` with `paid: true`, `paymentAccount` and `paymentDate` in one `POST /purchases` gives a purchase that is settled at once (supplier ledger 2400:xxxxx back to 0), not an open payable.
   - Same check for the sale with `customerId` (1500:xxxxx).
-- [ ] **The real Checkin account code.** `1960:10001` in `regnskap.config.json` is a guess. Run `pnpm foring accounts` against the real company and correct `checkinAccount` and `bankAccount`.
-- [ ] **Øreavrunding on old months (incl. the June 1-øre error).** `check` now offers a fri postering against `reconcile.roundingAccount` (default 7740) for months booked with Fiken's VAT, see docs/foring.md "Rette eldre måneder".
+- [ ] **The real Checkin account code.** `1960:10001` in `regnskap.config.json` is a guess. Look up the Checkin and bank accounts in the real company's chart of accounts in Fiken and correct `checkinAccount` and `bankAccount`.
+- [ ] **Øreavrunding on old months (incl. the June 1-øre error).** Opening a booked month now offers a fri postering against `reconcile.roundingAccount` (default 7740) for months booked with Fiken's VAT, see docs/foring.md "Rette eldre måneder".
   - Confirm 7740 with the accountant.
   - Try it in the test company first. Check that journal entry lines come back with the account codes we post (`1960:10001`, `7740`); a rounded month is only detected that way.
-  - Run `check` on each old month, then check that "Saldo" is exact for the latest one. Before the corrections it is a few øre off; it allows up to 1 kr.
+  - Open each old month in the web app, then check that "Saldo" is exact for the latest one. Before the corrections it is a few øre off; it allows up to 1 kr.
 
 - [ ] **Hotel invoice: lines without deduction.** We book them as the gross with `vatType: "NONE"` on 5990, 7350 and 7140 (frokost). The API has no domestic "uten fradrag" VAT type for purchases (only `*_FOREIGN_SERVICE_NONDEDUCTIBLE` and gold/emission quotas).
   - Book the 2026 invoice as a draft in the test company and check that Fiken accepts NONE on those accounts, and that the lines don't show in the mva-melding.
   - Confirm with the accountant that this is how they want non-deductible VAT (gross on the cost account), and the categories: bar/fest 25 % with deduction, crew and speakers' dinner without, rooms 12 % with and breakfast without.
-- [ ] **Hotel invoice: accounts.** 6300, 4500, 5990, 7350, 7140 and 7770 are suggestions, not read from the company's chart. Run `pnpm foring chart` and adjust `hotel.categories[].account` (the review blocks if an account is missing).
+- [ ] **Hotel invoice: accounts.** 6300, 4500, 5990, 7350, 7140 and 7770 are suggestions, not read from the company's chart. Compare them with the company's chart of accounts in Fiken (the account picker in the hotel review lists 4000–8999) and adjust `hotel.categories[].account` (the review blocks if an account is missing).
 - [ ] **Hotel invoice: EHF.** The tool reads the hotel's EHF via `GET /ehf` and attaches it with `ehfDocumentId`.
-  - Check that `documentUrl` gives the hotel's own PDF (with text layer and the same layout), not a page Fiken renders from the XML. If not, read it from the inbox with `--inbox-doc` or a local file.
+  - Check that `documentUrl` gives the hotel's own PDF (with text layer and the same layout), not a page Fiken renders from the XML. If not, open it from the inbox or as a local PDF under «Ad hoc».
   - Check that attaching the EHF to a purchase (and to a purchase draft) works, and that the EHF leaves the inbox.
   - Check that an EHF Fiken has booked itself gets `status: "processed"` and `purchaseId`; the tool then refuses to book it again.
 - [ ] **Hotel invoice: unpaid supplier purchase.** `kind: "supplier"`, `paid: false`, `dueDate`, `kid` in one `POST /purchases`.

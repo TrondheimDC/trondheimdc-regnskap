@@ -556,26 +556,3 @@ export function groupByBill(placements: Placement[]): BillGroup[] {
   }
   return groups
 }
-
-/** "NO121S0000033=crew,#57=servering" -> moves. */
-export function parseMovesArg(arg: string): Moves {
-  const moves: Moves = {}
-  for (const part of arg.split(",")) {
-    const [, key, category] = /^\s*(#\d+|NO\d+S\d+)\s*=\s*([a-z][a-z0-9-]*)\s*$/i.exec(part) ?? []
-    if (!key || !category)
-      throw new Error(`Ugyldig flytting "${part}", skriv f.eks. NO121S0000033=crew eller #57=crew`)
-    moves[key.toUpperCase()] = category
-  }
-  return moves
-}
-
-/** "crew=5990,lokaler=6300" -> account per category. */
-export function parseAccountsArg(arg: string): Record<string, string> {
-  const accounts: Record<string, string> = {}
-  for (const part of arg.split(",")) {
-    const [, category, account] = /^\s*([a-z][a-z0-9-]*)\s*=\s*(\d{4})\s*$/i.exec(part) ?? []
-    if (!category || !account) throw new Error(`Ugyldig konto "${part}", skriv f.eks. crew=5990`)
-    accounts[category] = account
-  }
-  return accounts
-}

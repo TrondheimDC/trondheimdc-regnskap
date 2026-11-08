@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { expect, test } from "vitest"
-import { parseAmount, parseAmountsArg, parseReportPdf, toReport } from "../src/lib/checkin.ts"
+import { parseAmount, parseReportPdf, toReport } from "../src/lib/checkin.ts"
 import { Config } from "../src/lib/config.ts"
 import { buildPlan, formatNok, lastDayOfMonth } from "../src/lib/plan.ts"
 import {
@@ -225,14 +225,13 @@ test("rejects PDFs without result accounts", async () => {
   await expect(parseReportPdf(empty)).rejects.toThrow(/ingen resultatkontoer/)
 })
 
+/** Movements in øre per Checkin account. */
+const amounts = (byAccount: Record<number, number>) => new Map(Object.entries(byAccount))
+
 test("accounts not covered by the recipe stop the run", () => {
-  expect(Object.fromEntries(parseAmountsArg("3000=49380,4300=1234.40"))).toEqual({
-    "3000": 4938000,
-    "4300": 123440,
-  })
-  expect(() => toReport("2026-03", parseAmountsArg("3000=100,3002=50"), config)).toThrow(/3002/)
+  expect(() => toReport("2026-03", amounts({ 3000: 10000, 3002: 5000 }), config)).toThrow(/3002/)
   // Accounts in Checkin's chart are explained.
-  expect(() => toReport("2026-03", parseAmountsArg("3000=100,7745=0.30"), config)).toThrow(
+  expect(() => toReport("2026-03", amounts({ 3000: 10000, 7745: 30 }), config)).toThrow(
     /7745 \(Øreavrunding: .*\): 0\.3/,
   )
 })
@@ -284,7 +283,7 @@ test("books on our own accounts regardless of the Checkin account numbers", () =
     },
   })
   const plan = buildPlan(
-    toReport("2026-03", parseAmountsArg("3000=1000,4300=100,4302=20,4335=30"), ours),
+    toReport("2026-03", amounts({ 3000: 100000, 4300: 10000, 4302: 2000, 4335: 3000 }), ours),
     ours,
   )
   expect(plan.purchase.lines.map((l) => [l.account, l.description, l.netPrice, l.vatType])).toEqual(

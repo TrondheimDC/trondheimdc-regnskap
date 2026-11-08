@@ -18,7 +18,7 @@
 //
 // A report is verified only when the signature holds for this PDF AND the PDF's email is `email`
 // (Min TDC checked the address the form sent, not the PDF). Uses Web Crypto, so it runs in the
-// browser and in Node alike.
+// browser and in the tests.
 //
 // Verification is information for the reviewer. It never changes how a report is booked.
 
@@ -202,7 +202,7 @@ export interface MinTdcSummary {
 }
 
 /**
- * The same words in the CLI and the web app. Undefined for an unsigned report: most reports
+ * What the review shows about the sender. Undefined for an unsigned report: most reports
  * aren't from Min TDC, so only a signature is worth a mention.
  */
 export function summarizeMinTdc(result: MinTdcResult): MinTdcSummary | undefined {

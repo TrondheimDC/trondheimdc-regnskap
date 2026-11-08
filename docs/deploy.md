@@ -28,7 +28,6 @@ push to main
    - **Redirect URIs**:
      - `https://regnskap.trondheimdc.no/auth/callback` (web)
      - `http://localhost:3000/auth/callback` (local `pnpm dev`)
-     - `http://127.0.0.1:8723/callback` (CLI, `pnpm foring login`)
    - **Godkjente brukere**: everyone who should be able to book. In development status, only they can log in, with at most 5 users.
 3. Copy the Client ID. It isn't secret.
 

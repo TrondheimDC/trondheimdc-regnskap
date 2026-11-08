@@ -16,9 +16,7 @@ import {
   buildHotelPlan,
   groupByBill,
   type HotelInvoice,
-  parseAccountsArg,
   parseHotelInvoicePdf,
-  parseMovesArg,
   rateOf,
 } from "../src/lib/hotel.ts"
 import {
@@ -136,7 +134,7 @@ describe("categories", () => {
   })
 
   test("a moved line wins over its moved bill, which wins over the rules", () => {
-    const moves = parseMovesArg("NO121S0000033=servering,#5=servering,NO121S0000010=lokaler")
+    const moves = { NO121S0000033: "servering", "#5": "servering", NO121S0000010: "lokaler" }
     const plan = buildHotelPlan(invoice, hotel, { moves })
     const of = (n: number) => plan.placements.find((p) => p.line.n === n)
     expect(of(19)).toMatchObject({ category: "servering", by: "bill" })
@@ -166,16 +164,6 @@ describe("categories", () => {
     })
     expect(prepared.plan.unknown).toEqual(["pizza"])
     expect(prepared.checks.find((c) => c.label === "Alle linjene har kategori")?.ok).toBe(false)
-  })
-
-  test("parses moves and accounts from the command line", () => {
-    expect(parseMovesArg("no121s0000033=crew, #57=servering")).toEqual({
-      NO121S0000033: "crew",
-      "#57": "servering",
-    })
-    expect(parseAccountsArg("crew=5990,lokaler=4590")).toEqual({ crew: "5990", lokaler: "4590" })
-    expect(() => parseMovesArg("Pizza=crew")).toThrow(/Ugyldig flytting/)
-    expect(() => parseAccountsArg("crew=59")).toThrow(/Ugyldig konto/)
   })
 })
 
