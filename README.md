@@ -30,9 +30,7 @@ Each review shows the numbers, the checks and where every number is in the PDF. 
 
 How each flow books and what it checks: [docs/foring.md](docs/foring.md).
 
-### Min TDC
-
-Utleggsrapporter that Min TDC uploads to the Fiken inbox carry an Ed25519 signature over the PDF and the sender. The review shows "Fra Min TDC – verifisert" with the address, login and roles, and a warning when the signature doesn't hold. Reports without a signature show nothing and work as before. It needs Min TDC's public key in `utlegg.minTdc.publicKey` in `regnskap.config.json` (see [docs/foring.md](docs/foring.md#fra-min-tdc)). It is information for the reviewer and doesn't change how a report is booked.
+**Min TDC** (TBD): Min TDC isn't published yet. The review can already check a signature on reports it uploads, but no such reports exist and no key is set. See [docs/foring.md](docs/foring.md#fra-min-tdc).
 
 ## Develop
 
@@ -45,7 +43,7 @@ mise run dev                 # http://localhost:3000, proxies /api/fiken to Fike
 
 Without Mise, install Node and pnpm and run `pnpm install` and `pnpm dev`.
 
-`pnpm dev:mock` runs against an in-memory Fiken (MSW, `src/mocks`) with sample bilag, so you can click through every flow without a Fiken login. It has a Min TDC report that verifies (Ola Testesen) and one with a borrowed signature (Per Testesen).
+`pnpm dev:mock` runs against an in-memory Fiken (MSW, `src/mocks`) with sample bilag, so you can click through every flow without a Fiken login.
 
 | Command | |
 |---|---|

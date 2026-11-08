@@ -345,6 +345,8 @@ Mot Fiken: at hotellet finnes som leverandør, at kontoene finnes, at EHF-en fin
 
 ### Fra Min TDC
 
+> **Ikke i bruk ennå.** Min TDC er ikke publisert, og nøkkelen er ikke satt. Kontrollen under er klar i koden, men ingen rapporter kommer fra Min TDC ennå.
+
 Foredragsholdere og crew kan sende utlegg gjennom Min TDC ([trondheimdc-min](https://github.com/TrondheimDC/trondheimdc-min)), som laster rapporten rett opp i innboksen. Alle kan legge en fil i innboksen (den tar imot e-post også), så teksten «Min TDC» i beskrivelsen beviser ingenting. Min TDC signerer derfor hver rapport, og signaturen står sist i beskrivelsen:
 
 ```
