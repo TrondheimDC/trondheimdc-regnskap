@@ -860,7 +860,9 @@ export function verifyUtlegg(report: Utleggsrapport, plan: UtleggPlan): Check[] 
     .filter((p) => p.category && p.rate === undefined)
     .map((p) => p.row.n)
   checks.push({
-    label: "Alle kvitteringene har kategori og mva-sats",
+    label: plan.placements.some((p) => p.needsRate)
+      ? "Alle kvitteringene har kategori og mva-sats"
+      : "Alle kvitteringene har kategori",
     expected: 0,
     actual: 0,
     ok: plan.unplaced.length === 0 && plan.unknown.length === 0,
@@ -875,7 +877,10 @@ export function verifyUtlegg(report: Utleggsrapport, plan: UtleggPlan): Check[] 
             ]
               .filter(Boolean)
               .join("; "),
-    hint: "Velg kategori og mva-sats for kvitteringene, eller legg til en regel i oppskriften.",
+    hint:
+      missingRate.length > 0
+        ? "Velg kategori og mva-sats for kvitteringene, eller legg til en regel i oppskriften."
+        : "Velg kategori for kvitteringene, eller legg til en regel i oppskriften.",
   })
 
   checks.push({
@@ -903,7 +908,9 @@ export function verifyUtlegg(report: Utleggsrapport, plan: UtleggPlan): Check[] 
     hint: "Sjekk satsen mot kvitteringen og velg den, så trekkes ikke mer mva fra enn kvitteringen viser.",
   })
 
-  const mixed = plan.placements.filter((p) => p.row.receiptRates.length > 1).map((p) => p.row.n)
+  const mixed = plan.placements
+    .filter((p) => p.needsRate && p.row.receiptRates.length > 1)
+    .map((p) => p.row.n)
   if (mixed.length > 0)
     checks.push({
       label: "Kvitteringer med flere mva-satser",

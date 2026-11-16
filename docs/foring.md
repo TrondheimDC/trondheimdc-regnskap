@@ -403,14 +403,14 @@ Kategorien fra skjemaet brukes som den er. Uten den (format 1) foreslår den fø
 
 «Støtte til meetups» er penger foreningen gir til en annen part, for eksempel en meetup-gruppes Meetup.com-abonnement. Den holdes adskilt fra programvare foreningen bruker selv.
 
-Om en kategori trekker fra mva (`deduct`), styres i oppskriften. Linjer uten fradrag føres med bruttobeløpet uten mva.
+Om en kategori trekker fra mva (`deduct`), styres i oppskriften. Linjer uten fradrag føres med bruttobeløpet uten mva. For en kategori uten fradrag spør ikke gjennomgangen etter mva-sats, og satsen står ikke i linjeteksten i Fiken.
 
 ### Kontroller
 
 - Kvitteringene mot summen i rapporten, og kjøpet mot summen.
-- Alle kvitteringene har kategori og mva-sats.
+- Alle kvitteringene har kategori, og mva-sats når kategorien trekker fra mva.
 - Mva-satser som ikke er lest fra kvitteringen, må bekreftes (bare når kategorien trekker fra mva).
-- Kvitteringer som nevner flere mva-satser.
+- Kvitteringer som nevner flere mva-satser (bare når kategorien trekker fra mva).
 - Kvitteringer fra flere mva-terminer eller år.
 - Kontonummer som ikke ble validert i skjemaet.
 - Format 2: antall rader mot «Antall kvitteringer», og en side for hver kvittering.

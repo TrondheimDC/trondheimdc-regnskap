@@ -507,6 +507,11 @@ export interface UtleggPlacement {
    * is a guess the user confirms.
    */
   rateBy?: "choice" | "receipt" | "currency" | "category"
+  /**
+   * The category deducts VAT at some rate, so the rate matters. Without deduction the gross is
+   * booked without VAT whatever the rate, and the review neither asks for nor shows it.
+   */
+  needsRate: boolean
 }
 
 const matches = (pattern: string, text: string) => new RegExp(pattern, "i").test(text)
@@ -548,7 +553,7 @@ export function classifyUtlegg(
             : defaults?.rate !== undefined
               ? [defaults.rate, "category"]
               : [undefined, undefined]
-    return { row, category, by, rate, rateBy }
+    return { row, category, by, rate, rateBy, needsRate: deductsAny(defaults?.deduct) }
   })
 }
 
@@ -558,7 +563,8 @@ export function classifyUtlegg(
 export interface UtleggPlanLine extends OrderLine {
   n: number
   category: string
-  rate: VatRate
+  /** The receipt's rate; none for a category that deducts no VAT. */
+  rate?: VatRate
   deduct: boolean
   gross: number
 }
@@ -587,15 +593,24 @@ function deducts(deduct: boolean | VatRate[], rate: VatRate) {
   return Array.isArray(deduct) ? deduct.includes(rate) : deduct
 }
 
+/** Whether a category deducts VAT at any rate. */
+function deductsAny(deduct: boolean | VatRate[] | undefined) {
+  return Array.isArray(deduct) ? deduct.length > 0 : deduct === true
+}
+
 function addDays(date: string, days: number): string {
   const d = new Date(`${date}T12:00:00Z`)
   d.setUTCDate(d.getUTCDate() + days)
   return d.toISOString().slice(0, 10)
 }
 
-/** Line text in Fiken: "#2 Teip og kabelstrips", with the rate when it isn't deducted. */
-function lineText(row: UtleggRow, rate: VatRate, deduct: boolean): string {
-  const suffix = !deduct && rate !== 0 ? ` (${RATE_LABEL(rate)}, uten fradrag)` : ""
+/**
+ * Line text in Fiken: "#2 Teip og kabelstrips", with the rate when the category deducts other
+ * rates but not this one.
+ */
+function lineText(row: UtleggRow, rate: VatRate | undefined, deduct: boolean): string {
+  const suffix =
+    !deduct && rate !== undefined && rate !== 0 ? ` (${RATE_LABEL(rate)}, uten fradrag)` : ""
   const original = row.original ? ` (${row.original.currency})` : ""
   return (
     `#${row.n} ${row.description}`.slice(0, 200 - suffix.length - original.length) +
@@ -607,7 +622,7 @@ function lineText(row: UtleggRow, rate: VatRate, deduct: boolean): string {
 /**
  * One purchase line per receipt, on its category's account. A deducted line is booked with the
  * rate's VAT type and the net Fiken requires for the gross; a line without deduction as the gross
- * without VAT (vatType NONE), like the hotel invoice.
+ * without VAT (vatType NONE), like the hotel invoice. A category that deducts nothing needs no rate.
  */
 export function buildUtleggPlan(
   report: Utleggsrapport,
@@ -624,24 +639,25 @@ export function buildUtleggPlan(
   const unplaced: UtleggPlacement[] = []
   for (const p of placements) {
     const category = utlegg.categories.find((c) => c.id === p.category)
-    if (!category || p.rate === undefined || p.row.amount === undefined) {
+    if (!category || (p.needsRate && p.rate === undefined) || p.row.amount === undefined) {
       unplaced.push(p)
       continue
     }
     const gross = p.row.amount
-    const deduct = p.rate !== 0 && deducts(category.deduct, p.rate)
-    const net = netFromGross(gross, VAT_TYPE_OF_RATE[p.rate])
+    const rate = p.needsRate ? p.rate : undefined
+    const deduct = rate !== undefined && rate !== 0 && deducts(category.deduct, rate)
+    const net = deduct ? netFromGross(gross, VAT_TYPE_OF_RATE[rate]) : gross
     lines.push({
       n: p.row.n,
       category: category.id,
-      rate: p.rate,
+      rate,
       deduct,
       gross,
-      description: lineText(p.row, p.rate, deduct),
+      description: lineText(p.row, rate, deduct),
       account: choices.accounts?.[category.id] ?? category.account,
-      vatType: deduct ? VAT_TYPE_OF_RATE[p.rate] : "NONE",
-      netPrice: deduct ? net : gross,
-      vat: deduct ? gross - net : 0,
+      vatType: deduct && rate !== undefined ? VAT_TYPE_OF_RATE[rate] : "NONE",
+      netPrice: net,
+      vat: gross - net,
     })
   }
 

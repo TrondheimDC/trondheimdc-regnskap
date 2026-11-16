@@ -427,8 +427,10 @@ function UtleggReview({
               {source.report.format === 2
                 ? "Kategorien er den personen valgte i skjemaet."
                 : "Oppskriften foreslår kategori ut fra beskrivelsen."}{" "}
-              Flytt en kvittering hvis den hører hjemme et annet sted. Mva-satsen leses fra
-              kvitteringen når den har tekst, ellers settes den etter kategori.
+              Flytt en kvittering hvis den hører hjemme et annet sted.{" "}
+              {plan.placements.some((p) => p.needsRate)
+                ? "Mva-satsen leses fra kvitteringen når den har tekst, ellers settes den etter kategori."
+                : "Utlegg føres uten mva-fradrag: hele beløpet går på kontoen."}
             </p>
             <ul className="flex flex-col gap-3">
               {plan.placements.map((p) => (
@@ -472,7 +474,11 @@ function UtleggReview({
           <ChecksCard
             checks={checks}
             blockers={blockers}
-            subtitle="Kvitteringene mot totalen, mva-satsene og datoene"
+            subtitle={
+              plan.placements.some((p) => p.needsRate)
+                ? "Kvitteringene mot totalen, mva-satsene og datoene"
+                : "Kvitteringene mot totalen og datoene"
+            }
           />
 
           {!blocked ? (
@@ -765,15 +771,19 @@ function ReceiptRow({
             onChange={onCategory}
             className="w-[14rem]"
           />
-          <ChoicePicker
-            label={`Mva-sats for kvittering ${p.row.n}`}
-            value={p.rate}
-            choices={RATES.map((r) => ({ value: r, label: RATE_LABEL(r) }))}
-            placeholder="Velg mva-sats"
-            invalid={guessed}
-            onChange={onRate}
-            className="w-[9rem]"
-          />
+          {p.needsRate ? (
+            <ChoicePicker
+              label={`Mva-sats for kvittering ${p.row.n}`}
+              value={p.rate}
+              choices={RATES.map((r) => ({ value: r, label: RATE_LABEL(r) }))}
+              placeholder="Velg mva-sats"
+              invalid={guessed}
+              onChange={onRate}
+              className="w-[9rem]"
+            />
+          ) : (
+            <span className="px-1 text-sm text-[var(--color-fg-base)]/60">Uten mva-fradrag</span>
+          )}
           {onShow ? (
             <Button variant="ghost" size="xs" onClick={onShow}>
               <FileText className="size-3.5" aria-hidden />
@@ -788,9 +798,12 @@ function ReceiptRow({
           )}
         >
           {[
-            p.rateBy && `Mva ${RATE_BY[p.rateBy]}`,
-            line && (line.deduct ? "fradrag" : line.rate === 0 ? "" : "uten fradrag"),
-            p.row.receiptRates.length > 1 &&
+            p.needsRate && p.rateBy && `Mva ${RATE_BY[p.rateBy]}`,
+            p.needsRate &&
+              line &&
+              (line.deduct ? "fradrag" : line.rate === 0 ? "" : "uten fradrag"),
+            p.needsRate &&
+              p.row.receiptRates.length > 1 &&
               `kvitteringen nevner ${p.row.receiptRates.map((r) => `${r} %`).join(" og ")}`,
             p.by === "form" && "kategori valgt i skjemaet",
             p.by === "moved" && "flyttet",
@@ -866,7 +879,9 @@ function PurchaseCard({ plan, name }: { plan: UtleggPlan; name: string }) {
         ))}
       </ul>
       <div className="mt-3 flex items-baseline justify-between gap-3 border-t border-white/10 pt-3">
-        <span className="text-sm text-[var(--color-fg-base)]/70">Sum inkl. mva</span>
+        <span className="text-sm text-[var(--color-fg-base)]/70">
+          {plan.lines.some((l) => l.deduct) ? "Sum inkl. mva" : "Sum"}
+        </span>
         <MarkedAmount marks={total} className="text-xl">
           {formatMoney(plan.gross, plan.currency)}
         </MarkedAmount>
@@ -890,9 +905,11 @@ function PurchaseLine({
           <span className="block font-semibold">{l.description}</span>
           <span className="block text-sm text-[var(--color-fg-base)]/60">
             Konto {l.account} ·{" "}
-            {l.rate === 0
-              ? "uten mva"
-              : `${RATE_LABEL(l.rate)}, ${l.deduct ? "fradrag" : "uten fradrag"}`}
+            {l.rate === undefined
+              ? "uten mva-fradrag"
+              : l.rate === 0
+                ? "uten mva"
+                : `${RATE_LABEL(l.rate)}, ${l.deduct ? "fradrag" : "uten fradrag"}`}
           </span>
         </span>
         <span className="flex shrink-0 flex-col items-end gap-1">

@@ -174,8 +174,7 @@ describe("the purchase", () => {
   test("a line per receipt; crew food without deduction, the rest deducted", () => {
     expect(plan.lines).toEqual([
       expect.objectContaining({
-        description:
-          "#1 Pizza til crew under rigging fredag kveld, 12 stk store pizza fra Peppes (15 % mva, uten fradrag)",
+        description: "#1 Pizza til crew under rigging fredag kveld, 12 stk store pizza fra Peppes",
         account: "5990",
         vatType: "NONE",
         netPrice: 245050,
@@ -270,6 +269,26 @@ describe("the recipe in the repo", () => {
 
   test("no utlegg deducts VAT, as the regnskapsfører has booked them", () => {
     expect(recipe.categories.filter((c) => c.deduct !== false).map((c) => c.id)).toEqual([])
+  })
+
+  test("no rate is asked for or written to Fiken, and no rate stops the booking", () => {
+    const plan = buildUtleggPlan(
+      {
+        ...report,
+        rows: [{ ...report.rows[0]!, description: "Diverse greier", receiptRates: [12] }],
+      },
+      recipe,
+      { moves: { "#1": "annet" } },
+    )
+    expect(plan.placements[0]).toMatchObject({ category: "annet", needsRate: false })
+    expect(plan.unplaced).toEqual([])
+    expect(plan.lines[0]).toMatchObject({
+      rate: undefined,
+      deduct: false,
+      vatType: "NONE",
+      vat: 0,
+      description: "#1 Diverse greier",
+    })
   })
 
   test("Meetup.com is support to another party, our own software is not", () => {
@@ -799,7 +818,7 @@ describe("format 2", () => {
     expect(plan.placements.map((p) => p.category)).toEqual([undefined, undefined, "materiell"])
     expect(plan.unplaced.map((u) => u.row.n)).toEqual([1, 2])
     const { checks } = prepareUtlegg({ report, description: "test" }, recipe)
-    expect(check(checks, "Alle kvitteringene har kategori og mva-sats")?.ok).toBe(false)
+    expect(check(checks, "Alle kvitteringene har kategori")?.ok).toBe(false)
   })
 
   test("a lost row or a missing receipt page fails", async () => {
